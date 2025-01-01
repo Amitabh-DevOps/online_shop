@@ -1,0 +1,69 @@
+﻿// src/bootstrap-overrides.scss
+$primary: #8a2be2;
+$primary-rgb: 138, 43, 226;
+
+:root {
+    --bs-primary: #{$primary};
+    --bs-primary-rgb: #{$primary-rgb};
+}
+
+.btn-primary {
+    --bs-btn-bg: #{$primary};
+    --bs-btn-border-color: #{$primary};
+    --bs-btn-hover-bg: darken($primary, 10%);
+    --bs-btn-hover-border-color: darken($primary, 12%);
+    --bs-btn-active-bg: darken($primary, 12%);
+    --bs-btn-active-border-color: darken($primary, 15%);
+    --bs-btn-disabled-bg: #{$primary};
+    --bs-btn-disabled-border-color: #{$primary};
+}
+
+.btn-outline-primary {
+    --bs-btn-color: #8a2be2;
+    --bs-btn-border-color: #8a2be2;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: #8a2be2;
+    --bs-btn-hover-border-color: #8a2be2;
+    --bs-btn-focus-shadow-rgb: 138, 43, 226;
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: #8a2be2;
+    --bs-btn-active-border-color: #8a2be2;
+    --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+    --bs-btn-disabled-color: #8a2be2;
+    --bs-btn-disabled-bg: transparent;
+    --bs-btn-disabled-border-color: #8a2be2;
+    --bs-gradient: none;
+}
+
+.nav-pills {
+    --bs-nav-pills-link-active-bg: #8a2be2;
+}
+
+.dropdown-item.active, .dropdown-item:active {
+    background-color: #8a2be2;
+}
+
+.bg-primary {
+    background-color: #{$primary} !important;
+}
+
+.border-primary {
+    border-color: #{$primary} !important;
+}
+
+.text-primary {
+    color: #{$primary} !important;
+}
+
+a {
+    color: #8a2be2;
+}
+
+a:hover {
+    color: #6e24b5;
+}
+
+// Price text color override
+.card-text, .price-text {
+    color: white !important;
+}
