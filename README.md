@@ -34,7 +34,7 @@ A modern, responsive e-commerce platform built with React, featuring a sophistic
 ### Prerequisites
 
 - Node.js (v16 or higher)
-- npm/yarn
+- npm
 
 ### Installation
 
@@ -47,23 +47,52 @@ cd online-shop
 2. Install dependencies:
 ```bash
 npm install
-# or
-yarn install
 ```
 
 3. Start the development server:
 ```bash
 npm run dev
-# or
-yarn dev
 ```
 
 4. Build for production:
 ```bash
 npm run build
-# or
-yarn build
 ```
+
+## 🐳 Docker Support
+
+### Building the Docker Image
+
+```bash
+# Build the Docker image
+docker build -t online-shop .
+```
+
+### Running the Container
+
+```bash
+# Run the container
+docker run -d -p 3000:3000 --name online-shop online-shop
+```
+
+The application will be available at `http://localhost:3000`
+
+### Docker Commands Reference
+
+- **Stop the container:**
+  ```bash
+  docker stop online-shop
+  ```
+
+- **Remove the container:**
+  ```bash
+  docker rm online-shop
+  ```
+
+- **View logs:**
+  ```bash
+  docker logs online-shop
+  ```
 
 ## 🛠️ Tech Stack
 
