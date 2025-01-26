@@ -112,7 +112,10 @@ export function Footer() {
                     </div>
                     <div>
                         <FontAwesomeIcon icon={faCopyright} /> {new Date().getFullYear()} Online Shop. 
-                        All rights reserved. This project is open for learning.
+                        All rights reserved.
+                    </div>
+                    <div className="mt-1">
+                    Driven for TrainWithShubhamCommunity.
                     </div>
                 </div>
             </Container>
