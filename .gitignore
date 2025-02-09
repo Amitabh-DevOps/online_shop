@@ -37,3 +37,48 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+
+
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+terraform/.terraform.lock.hcl
+terraform/.terraform.tfstate.lock.info
+terraform/mega-project-key1
+terraform/mega-project-key1.pub
+terraform/.terraform/providers/registry.terraform.io/hashicorp/aws/5.82.2/linux_amd64/LICENSE.txt
+terraform/.terraform/providers/registry.terraform.io/hashicorp/aws/5.82.2/linux_amd64/terraform-provider-aws_v5.82.2_x5
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
