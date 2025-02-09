@@ -43,7 +43,7 @@ jobs:
 
       - name: Get EC2 Public IP
         id: get-ec2-ip
-        run: echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+        run: echo "EC2_IP=$(terraform output -raw instance_public_ip)" >> $GITHUB_ENV
         working-directory: terraform
 
       - name: Store EC2 Public IP as Secret
