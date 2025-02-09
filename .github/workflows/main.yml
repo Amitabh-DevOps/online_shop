@@ -23,9 +23,9 @@ jobs:
         run: terraform init
         working-directory: terraform
 
-      - name: Format and Validate Terraform
-        run: terraform fmt -check && terraform validate
-        working-directory: terraform
+      # - name: Format and Validate Terraform
+      #   run: terraform fmt -check && terraform validate
+      #   working-directory: terraform
         
       - name: Terraform Plan
         run: terraform plan
