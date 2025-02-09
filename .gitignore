@@ -85,10 +85,35 @@ terraform/terraform.tfstate.backup
 
 
 
-terraform/.terraform.lock.hcl
-terraform/.terraform.tfstate.lock.info
-terraform/terraform.tfstate
-terraform/terraform.tfstate.backup
-terraform/tws-terra-key
-terraform/.terraform/modules/modules.json
-terraform/.terraform/providers/registry.terraform.io/hashicorp/aws/5.80.0/darwin_arm64/terraform-provider-aws_v5.80.0_x5
+# Ignore Terraform state and backup files
+*.tfstate*
+*.tfvars
+*.tfvars.json
+*.plan
+
+# Ignore .terraform directory (where provider plugins are stored)
+.terraform/
+
+# Ignore sensitive files
+*.key
+*.pem
+*.p12
+config.json
+secrets.txt
+
+# Ignore environment configuration files
+.env
+.env.local
+
+# Ignore IDE/editor-specific files
+.idea/
+.vscode/
+
+# Ignore backup files
+*.backup
+*.lock.hcl
+
+# Ignore large Terraform provider files (optional if .terraform/ is ignored)
+# This may be unnecessary unless you want more specificity.
+# Terraform-backend/.terraform/providers/...
+# Terraform-resources/.terraform/providers/...
