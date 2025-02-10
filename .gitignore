@@ -55,6 +55,9 @@ coverage/
 config.json
 secrets.txt
 
+# Ignore Terraform provider files and binaries
+.terraform/
+
 # Additional large files (if any)
 terraform_backend/terraform.tfstate*
 terraform_backend/terraform.tfstate.backup
