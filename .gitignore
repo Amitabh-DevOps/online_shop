@@ -101,7 +101,6 @@ coverage/
 # SSH keys
 *.key
 *.pem
-*.pub
 github-action-key
 
 # Environment/secrets
