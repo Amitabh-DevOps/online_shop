@@ -57,7 +57,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Apply Backend Configuration
-        run: terraform apply --auto-approve -var="create_backend=${{ env.CREATE_BACKEND }}"
+        run: terraform apply --auto-approve -var="create_backend=$CREATE_BACKEND"
         working-directory: terraform/terraform_backend
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

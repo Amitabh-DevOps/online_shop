@@ -62,6 +62,13 @@ resource "aws_security_group" "terraform_sg" {
         protocol    = var.https_protocol
         cidr_blocks = [var.https_cidr]
     }
+    ingress {
+        description = "Allow access to port 3000 for the application"
+        from_port   = 3000
+        to_port     = 3000
+        protocol    = var.app_protocol
+        cidr_blocks = [var.app_cidr]
+    }
 
     egress {
         description = "Allow all outgoing traffic"

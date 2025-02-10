@@ -115,3 +115,17 @@ variable "outgoing_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+
+# Application port variables
+variable "app_protocol" {
+  description = "Specifies the protocol to use for application traffic (default: TCP)."
+  type        = string
+  default     = "tcp"
+}
+
+variable "app_cidr" {
+  description = "Defines the CIDR block to allow application access (default: open to all)."
+  type        = string
+  default     = "0.0.0.0/0"
+}
