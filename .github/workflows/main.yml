@@ -148,26 +148,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: SSH into EC2 and Deploy
+      # First SSH step: Update system and install Docker
+      - name: Update System and Install Docker
         env:
           EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-
           ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
-            # Update package information and install Docker from Ubuntu repository
             sudo apt-get update -y
             sudo apt install docker.io -y
-
-            # Add the current user to the docker group and refresh group membership
             sudo usermod -aG docker ubuntu
+            exit
+          EOF
 
-            # Deploy the Docker container
+      # Second SSH step: Deploy the Docker container
+      - name: Deploy Container
+        env:
+          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo docker stop online_shop || true
             sudo docker rm online_shop || true
-            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
-            sudo docker run -d -p 3000:3000 --name online_shop ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
-            
-            EOF
+            sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
+            sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
+          EOF
