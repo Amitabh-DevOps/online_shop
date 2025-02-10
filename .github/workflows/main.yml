@@ -156,9 +156,19 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << EOF
+          ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+            # Update package information and install Docker from Ubuntu repository
+            sudo apt-get update -y
+            sudo apt install docker.io -y
+
+            # Add the current user to the docker group and refresh group membership
+            sudo usermod -aG docker $USER && newgrp docker
+
+            # Deploy the Docker container
             sudo docker stop online_shop || true
             sudo docker rm online_shop || true
             sudo docker pull ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
             sudo docker run -d -p 3000:3000 --name online_shop ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
-          EOF
+            
+            EOF
+
