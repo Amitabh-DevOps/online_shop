@@ -4,6 +4,11 @@ resource "aws_s3_bucket" "terraform_aws_s3_bucket" {
     tags = {
         Name = var.aws_s3_bucket_name
     }
+        
+    lifecycle {
+        prevent_destroy = true
+        ignore_changes = [tags]
+    }
 }
 
 resource "aws_dynamodb_table" "terraform_aws_db" {
@@ -18,5 +23,10 @@ resource "aws_dynamodb_table" "terraform_aws_db" {
 
     tags = {
         Name = var.aws_dynamodb_table_name
+    }
+
+    lifecycle {
+        prevent_destroy = true
+        ignore_changes = [tags]
     }
 }

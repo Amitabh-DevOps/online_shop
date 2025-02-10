@@ -18,6 +18,10 @@ data "aws_ami" "ubuntu" {
 resource "aws_key_pair" "terraform_key" {
     key_name   = var.aws_key_pair_name
     public_key = file(var.aws_key_pair_public_key)
+
+    lifecycle {
+        prevent_destroy = true
+    }
 }
 
 # Get the default VPC for the region
@@ -29,6 +33,10 @@ resource "aws_security_group" "terraform_sg" {
     description = var.aws_sg_description
     vpc_id      = aws_default_vpc.default.id
 
+    lifecycle {
+        prevent_destroy = true
+    }
+    
     ingress {
         description = "Allow access to SSH port 22"
         from_port   = 22
