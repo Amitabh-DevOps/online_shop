@@ -177,3 +177,4 @@ jobs:
             sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
             sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
           "
+          
