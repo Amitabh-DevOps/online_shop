@@ -89,3 +89,20 @@ coverage/
 
 # Ignore temporary files
 .cache/
+
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.lock.hcl
+*.plan
+
+# SSH keys
+*.key
+*.pem
+*.pub
+
+# Environment/secrets
+.env
+secrets.txt
