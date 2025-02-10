@@ -152,7 +152,7 @@ jobs:
       - name: Update System and Install Docker
         env:
           EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
@@ -167,7 +167,7 @@ jobs:
       - name: Deploy Container
         env:
           EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
