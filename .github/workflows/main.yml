@@ -31,8 +31,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-      - name: testing configuration
+      - name: Testing Configuration
         run: aws s3 ls
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Check if S3 Bucket Exists
         id: check_bucket
@@ -114,21 +117,6 @@ jobs:
         run: echo "ec2_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
         working-directory: terraform/terraform_resources
 
-      # - name: Get EC2 Public IP
-      #   id: get-ec2-ip
-      #   env:
-      #     AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #   run: echo "EC2_IP=$(terraform output -raw instance_public_ip)" >> $GITHUB_ENV
-      #   working-directory: terraform/terraform_resources
-
-      # - name: Store EC2 Public IP as Secret
-      #   env:
-      #     AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #   run: echo "EC2_PUBLIC_IP=${{ env.EC2_IP }}" >> $GITHUB_ENV
-
-  # Docker Job to Build & Push Image
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
@@ -146,7 +134,6 @@ jobs:
       - name: Push Docker Image to DockerHub
         run: docker push ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
 
-  # Deploy Job to Run Container on EC2
   deploy:
     name: Deploy on EC2
     runs-on: ubuntu-latest
@@ -163,9 +150,7 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
-            sudo apt update -y
-          "
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "sudo apt update -y"
 
       # Step 2: SSH – Install Docker
       - name: Install Docker
@@ -175,10 +160,7 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
-            sudo apt install docker.io -y
-            sudo usermod -aG docker ubuntu
-          "
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "sudo apt install docker.io -y && sudo usermod -aG docker ubuntu"
 
       # Step 3: SSH – Deploy the Docker Container
       - name: Deploy Container
