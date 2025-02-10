@@ -8,15 +8,15 @@ pnpm-debug.log*
 lerna-debug.log*
 
 # Dependencies
-node_modules
-dist
-dist-ssr
+node_modules/
+dist/
+dist-ssr/
 *.local
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -26,8 +26,7 @@ dist-ssr
 
 # Environment files
 .env
-.env.*
-!.env.example
+.env.* !.env.example
 
 # Build files
 build/
@@ -37,8 +36,6 @@ coverage/
 *.tmp
 *.temp
 .cache/
-
-
 
 # Ignore Terraform state and backup files
 *.tfstate*
@@ -51,12 +48,18 @@ coverage/
 # Ignore Terraform provider files and cache
 .terraform/
 
-# Ignore SSH keys
+# Ignore SSH keys and sensitive files
 *.key
 *.pem
 *.p12
 config.json
 secrets.txt
+
+# Additional large files (if any)
+terraform_backend/terraform.tfstate*
+terraform_backend/terraform.tfstate.backup
+terraform_resources/terraform.tfstate*
+terraform_resources/terraform.tfstate.backup
 
 # Ignore Logs
 logs/
