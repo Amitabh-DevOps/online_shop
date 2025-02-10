@@ -156,11 +156,10 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo apt update -y
-            sleep 2
-
-          EOF
+            exit
+          EOF || true
 
       # Step 2: SSH – Install Docker
       - name: Install Docker
@@ -170,11 +169,11 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo apt install docker.io -y
             sudo usermod -aG docker ubuntu
-            sleep 2
-          EOF
+            exit
+          EOF || true
 
       # Step 3: SSH – Deploy the Docker Container
       - name: Deploy Container
@@ -185,10 +184,11 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo docker stop online_shop || true
             sudo docker rm online_shop || true
             sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
             sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
-            sleep 2
-          EOF
+            exit
+          EOF || true
+
