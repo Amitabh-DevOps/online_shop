@@ -102,6 +102,7 @@ coverage/
 *.key
 *.pem
 *.pub
+github-action-key
 
 # Environment/secrets
 .env

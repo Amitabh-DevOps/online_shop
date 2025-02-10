@@ -20,7 +20,8 @@ resource "aws_key_pair" "terraform_key" {
     public_key = file(var.aws_key_pair_public_key)
 
     lifecycle {
-        prevent_destroy = true
+        # prevent_destroy = true
+        ignore_changes = [tags]
     }
 }
 
@@ -34,7 +35,8 @@ resource "aws_security_group" "terraform_sg" {
     vpc_id      = aws_default_vpc.default.id
 
     lifecycle {
-        prevent_destroy = true
+        # prevent_destroy = true
+        ignore_changes = [tags]
     } 
 
     ingress {
@@ -75,7 +77,7 @@ resource "aws_security_group" "terraform_sg" {
 }
 
 # Create an EC2 instance
-resource "aws_instance" "mega_project_instance" {
+resource "aws_instance" "github_action_instance" {
     ami           = data.aws_ami.ubuntu.id
     instance_type = var.aws_instance_type
     key_name      = aws_key_pair.terraform_key.key_name

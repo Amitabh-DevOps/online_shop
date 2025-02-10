@@ -6,7 +6,7 @@ resource "aws_s3_bucket" "terraform_aws_s3_bucket" {
     }
         
     lifecycle {
-        prevent_destroy = true
+        # prevent_destroy = true
         ignore_changes = [tags]
     }
 }
@@ -26,7 +26,7 @@ resource "aws_dynamodb_table" "terraform_aws_db" {
     }
 
     lifecycle {
-        prevent_destroy = true
+        # prevent_destroy = true
         ignore_changes = [tags]
     }
 }

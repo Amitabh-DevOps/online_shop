@@ -46,20 +46,20 @@ variable "aws_instance_volume_type" {
 variable "aws_key_pair_name" {
   description = "The name of the SSH key pair to use for accessing the EC2 instance."
   type        = string
-  default     = "github-action-key-pair1"
+  default     = "github-action-key"
 }
 
 variable "aws_key_pair_public_key" {
   description = "The path to the public key file for the SSH key pair."
   type        = string
-  default     = "github-action-key-pair1.pub"
+  default     = "github-action-key.pub"
 }
 
 # Security group variables
 variable "aws_sg_name" {
   description = "Defines the name of the AWS Security Group to be created."
   type        = string
-  default     = "github-actions-sgs1"
+  default     = "github-actions-sg"
 }
 
 variable "aws_sg_description" {
