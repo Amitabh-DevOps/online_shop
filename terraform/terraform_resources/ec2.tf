@@ -35,8 +35,8 @@ resource "aws_security_group" "terraform_sg" {
 
     lifecycle {
         prevent_destroy = true
-    }
-    
+    } 
+
     ingress {
         description = "Allow access to SSH port 22"
         from_port   = 22
