@@ -3,7 +3,7 @@ name: CI/CD Pipeline for Online Shop
 on:
   push:
     branches:
-      - main
+      - github-action
 
 jobs:
   # Terraform Job to Provision EC2
