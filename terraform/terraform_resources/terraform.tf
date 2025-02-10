@@ -12,7 +12,7 @@ terraform {
     region = "eu-west-1"
     dynamodb_table = "github-actions-db"
   }
-  
+
 }
 # Configure the AWS Provider
 provider "aws" {
