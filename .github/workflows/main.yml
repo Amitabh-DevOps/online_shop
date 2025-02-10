@@ -158,8 +158,9 @@ jobs:
           chmod 600 private_key.pem
           ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo apt update -y
-            exit
-          EOF || true
+            sleep 2
+
+          EOF
 
       # Step 2: SSH – Install Docker
       - name: Install Docker
@@ -172,8 +173,8 @@ jobs:
           ssh -tt -o StrictHostKeyChecking=no -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
             sudo apt install docker.io -y
             sudo usermod -aG docker ubuntu
-            exit
-          EOF || true
+            sleep 2
+          EOF
 
       # Step 3: SSH – Deploy the Docker Container
       - name: Deploy Container
@@ -189,5 +190,5 @@ jobs:
             sudo docker rm online_shop || true
             sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
             sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
-            exit
-          EOF || true
+            sleep 2
+          EOF
