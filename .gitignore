@@ -57,6 +57,7 @@ secrets.txt
 
 # Ignore Terraform provider files and binaries
 .terraform/
+terraform/terraform_backend/.terraform/providers/registry.terraform.io/hashicorp/aws/5.86.0/linux_amd64/terraform-provider-aws_v5.86.0_x5
 
 # Additional large files (if any)
 terraform_backend/terraform.tfstate*
