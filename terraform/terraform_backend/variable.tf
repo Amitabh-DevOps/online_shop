@@ -29,3 +29,10 @@ variable "aws_db_hashkey" {
   type        = string
   default     = "LockID"
 }
+
+
+variable "create_backend" {
+  description = "Whether to create the backend resources (true for initial run)"
+  type        = bool
+  default     = false
+}
