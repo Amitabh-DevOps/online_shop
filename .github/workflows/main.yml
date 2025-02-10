@@ -31,6 +31,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
+      - name: testing configuration
+        run: aws s3 ls
+
       - name: Initialize Backend
         run: terraform init
         working-directory: terraform/terraform_backend
