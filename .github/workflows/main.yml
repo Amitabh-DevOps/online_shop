@@ -140,55 +140,51 @@ jobs:
         run: docker push ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
 
   # Deploy Job to Run Container on EC2
-  deploy:
-    name: Deploy on EC2
-    runs-on: ubuntu-latest
-    needs: docker
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+deploy:
+  name: Deploy on EC2
+  runs-on: ubuntu-latest
+  needs: docker
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      # Step 1: SSH – Update System
-      - name: Update System
-        env:
-          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
-            sudo apt update -y
-            exit
-          EOF || true
+    # Step 1: SSH – Update System
+    - name: Update System
+      env:
+        EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+        SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      run: |
+        echo "$SSH_PRIVATE_KEY" > private_key.pem
+        chmod 600 private_key.pem
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
+          sudo apt update -y
+        "
 
-      # Step 2: SSH – Install Docker
-      - name: Install Docker
-        env:
-          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
-            sudo apt install docker.io -y
-            sudo usermod -aG docker ubuntu
-            exit
-          EOF || true
+    # Step 2: SSH – Install Docker
+    - name: Install Docker
+      env:
+        EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+        SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      run: |
+        echo "$SSH_PRIVATE_KEY" > private_key.pem
+        chmod 600 private_key.pem
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
+          sudo apt install docker.io -y
+          sudo usermod -aG docker ubuntu
+        "
 
-      # Step 3: SSH – Deploy the Docker Container
-      - name: Deploy Container
-        env:
-          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i private_key.pem ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
-            sudo docker stop online_shop || true
-            sudo docker rm online_shop || true
-            sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
-            sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
-            exit
-          EOF || true
-
+    # Step 3: SSH – Deploy the Docker Container
+    - name: Deploy Container
+      env:
+        EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+        SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      run: |
+        echo "$SSH_PRIVATE_KEY" > private_key.pem
+        chmod 600 private_key.pem
+        ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
+          sudo docker stop online_shop || true
+          sudo docker rm online_shop || true
+          sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
+          sudo docker run -d -p 3000:3000 --name online_shop ${DOCKER_USERNAME}/online_shop:latest
+        "
