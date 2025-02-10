@@ -162,7 +162,7 @@ jobs:
             sudo apt install docker.io -y
 
             # Add the current user to the docker group and refresh group membership
-            sudo usermod -aG docker $USER
+            sudo usermod -aG docker ubuntu
 
             # Deploy the Docker container
             sudo docker stop online_shop || true
