@@ -1,11 +1,11 @@
 name: Destroy Infrastructure
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: "Type 'destroy' to confirm"
-        required: true
+    workflow_dispatch:
+      inputs:
+        confirm:
+          description: "Type 'destroy' to confirm"
+          required: true
 
 jobs:
   terraform-destroy-resources:
