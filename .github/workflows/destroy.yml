@@ -1,11 +1,11 @@
 name: Destroy Infrastructure
 
 on:
-    workflow_dispatch:
-      inputs:
-        confirm:
-          description: "Type 'destroy' to confirm"
-          required: true
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm"
+        required: true
 
 jobs:
   terraform-destroy-resources:
@@ -56,9 +56,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-    #   - name: Initialize Terraform (Backend)
-    #     run: terraform init
-    #     working-directory: terraform/terraform_backend
+      - name: Initialize Terraform (Backend)
+        run: terraform init
+        working-directory: terraform/terraform_backend
 
       - name: Destroy Backend (S3/DynamoDB)
         if: ${{ github.event.inputs.confirm == 'destroy' }}
