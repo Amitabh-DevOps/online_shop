@@ -8,7 +8,7 @@ terraform {
 
   backend "s3" {
     bucket = "github-actions-bucket"
-    key = "terraform.tfstate"
+    key = "terraform_backend/terraform.tfstate"
     region = "eu-west-1"
     dynamodb_table = "github-actions-db"
   }
