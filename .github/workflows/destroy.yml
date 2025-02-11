@@ -75,7 +75,7 @@ jobs:
 
       - name: Destroy Backend (S3/DynamoDB)
         if: ${{ github.event.inputs.confirm == 'destroy' }}
-        run: terraform destroy --auto-approve -var="create_backend=false"
+        run: terraform destroy --auto-approve 
         working-directory: terraform/terraform_backend
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
