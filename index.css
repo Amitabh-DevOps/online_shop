@@ -11,9 +11,23 @@
     --footer-hover: #000000;
 }
 
+/* Modified: Added a subtle gradient to the background */
 body {
-    background-color: var(--dark-bg) !important;
+    background: linear-gradient(135deg, var(--dark-bg), #000000) !important;
     color: var(--text-primary) !important;
+}
+
+/* Keyframes for the pulsating card effect */
+@keyframes pulse {
+    0% {
+        box-shadow: 0 4px 12px var(--primary-glow);
+    }
+    50% {
+        box-shadow: 0 4px 16px rgba(138, 43, 226, 0.3);
+    }
+    100% {
+        box-shadow: 0 4px 12px var(--primary-glow);
+    }
 }
 
 .bg-light {
@@ -27,9 +41,10 @@ body {
     transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease !important;
 }
 
+/* Modified: Remove the static box-shadow and add the pulse animation */
 .card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px var(--primary-glow);
+    animation: pulse 1.5s infinite;
     background-color: var(--dark-surface-hover) !important;
 }
 
