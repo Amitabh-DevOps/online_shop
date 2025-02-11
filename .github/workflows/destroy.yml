@@ -37,7 +37,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-west-1
-          
+
       - name: Destroy Application Resources
         if: ${{ github.event.inputs.confirm == 'destroy' }}
         run: terraform destroy --auto-approve
@@ -80,7 +80,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-west-1
-  
+
       - name: Import DynamoDB Table (if exists)
         continue-on-error: true
         run: terraform import 'aws_dynamodb_table.terraform_aws_db[0]' github-actions-db
@@ -97,7 +97,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1 
+          AWS_REGION: eu-west-1
 
       - name: Destroy Backend Resources
         run: terraform destroy --auto-approve -var="create_backend=true"
