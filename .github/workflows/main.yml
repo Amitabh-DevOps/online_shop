@@ -1,4 +1,4 @@
-name: CI/CD Pipeline for Online Shop
+name: CI/CD Pipeline for Online Shop 
 
 on:
   push:
