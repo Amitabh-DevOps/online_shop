@@ -39,6 +39,7 @@ jobs:
           AWS_REGION: eu-west-1
 
       - name: Show Terraform State (resources)
+        continue-on-error: true
         run: terraform state list
         working-directory: terraform/terraform_resources
         env:
