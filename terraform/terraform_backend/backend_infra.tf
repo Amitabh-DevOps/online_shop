@@ -1,6 +1,7 @@
 resource "aws_s3_bucket" "terraform_aws_s3_bucket" {
   count  = var.create_backend ? 1 : 0
   bucket = var.aws_s3_bucket_name
+  force_destroy = true
 
   tags = {
     Name = var.aws_s3_bucket_name
