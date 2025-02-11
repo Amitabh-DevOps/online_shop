@@ -73,7 +73,7 @@ jobs:
 
       - name: Import S3 Bucket (if exists)
         continue-on-error: true
-        run: terraform import 'aws_s3_bucket.terraform_aws_s3_bucket[0]' github-actions-bucket
+        run: terraform import 'aws_s3_bucket.terraform_aws_s3_bucket[0]' ${{ secrets.AWS_S3_BUCKET }}
         working-directory: terraform/terraform_backend
         env:
           TF_VAR_create_backend: "true"
@@ -83,7 +83,7 @@ jobs:
 
       - name: Import DynamoDB Table (if exists)
         continue-on-error: true
-        run: terraform import 'aws_dynamodb_table.terraform_aws_db[0]' github-actions-db
+        run: terraform import 'aws_dynamodb_table.terraform_aws_db[0]' ${{ secrets.AWS_DYNAMODB_TABLE }}
         working-directory: terraform/terraform_backend
         env:
           TF_VAR_create_backend: "true"
@@ -93,7 +93,7 @@ jobs:
 
       # --- Empty the S3 Bucket Before Destroying Backend Resources ---
       - name: Empty S3 Bucket
-        run: aws s3 rm s3://github-actions-bucket --recursive
+        run: aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -107,3 +107,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-west-1
+
+
+          # ${{ secrets.AWS_S3_BUCKET }}
+          # ${{ secrets.AWS_DYNAMODB_TABLE }}
