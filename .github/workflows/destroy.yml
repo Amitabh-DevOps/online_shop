@@ -6,6 +6,10 @@ on:
       confirm:
         description: "Type 'destroy' to confirm"
         required: true
+      destroy_backend:
+        description: "Also destroy S3/DynamoDB? (default: false)"
+        required: false
+        default: "false"
 
 jobs:
   terraform-destroy-resources:
@@ -15,7 +19,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
         with:
-          ref: github-action
+            ref: github-action
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -46,14 +50,15 @@ jobs:
 
   terraform-destroy-backend:
     name: Destroy Terraform Backend
+    if: ${{ github.event.inputs.confirm == 'destroy' && github.event.inputs.destroy_backend == 'true' }}
     runs-on: ubuntu-latest
     needs: terraform-destroy-resources
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
         with:
-          ref: github-action
-
+            ref: github-action
+            
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -73,44 +78,8 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: Debug - List S3 Buckets
-        run: aws s3 ls
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-
-      - name: Debug - List DynamoDB Tables
-        run: aws dynamodb list-tables
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-
-      - name: Show Terraform State
-        run: terraform state list
-        working-directory: terraform/terraform_backend
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        
-      - name: Import S3 bucket into Terraform state
-        run: terraform import aws_s3_bucket.terraform_aws_s3_bucket[0] github-action-bucket
-        working-directory: terraform/terraform_backend
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Import DynamoDB table into Terraform state
-        run: terraform import aws_dynamodb_table.terraform_aws_db[0] github-actions-db
-        working-directory: terraform/terraform_backend
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
       - name: Destroy Backend (S3/DynamoDB)
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        run: terraform destroy --auto-approve -var="create_backend=true"
+        run: terraform destroy --auto-approve -var="create_backend=false"
         working-directory: terraform/terraform_backend
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
