@@ -1,9 +1,9 @@
-name: CI/CD Pipeline for Online Shop 
+name: CI/CD Pipeline for Online Shop
 
 on:
   push:
     branches:
-      - github-action
+      - main
 
 jobs:
   terraform-backend:
@@ -114,13 +114,9 @@ jobs:
 
       - name: Get EC2 Public IP
         id: get-ec2-ip
-        run: echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
-        working-directory: terraform
+        run: echo "ec2_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+        working-directory: terraform/terraform_resources
 
-      - name: Store EC2 Public IP as Secret
-        run: echo "EC2_PUBLIC_IP=${{ env.EC2_IP }}" >> $GITHUB_ENV
-
-  # Docker Job to Build & Push Image
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
