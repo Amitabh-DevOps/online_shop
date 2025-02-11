@@ -40,6 +40,9 @@ jobs:
         if: ${{ github.event.inputs.confirm == 'destroy' }}
         run: terraform destroy --auto-approve
         working-directory: terraform/terraform_resources
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
   terraform-destroy-backend:
     name: Destroy Terraform Backend
@@ -74,3 +77,6 @@ jobs:
         if: ${{ github.event.inputs.confirm == 'destroy' }}
         run: terraform destroy --auto-approve -var="create_backend=false"
         working-directory: terraform/terraform_backend
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
