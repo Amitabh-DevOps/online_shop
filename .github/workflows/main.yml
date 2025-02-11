@@ -3,7 +3,7 @@ name: CI/CD Pipeline for Online Shop
 on:
   push:
     branches:
-      - github-action
+      - main
 
 jobs:
   terraform-backend:
