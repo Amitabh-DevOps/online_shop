@@ -157,10 +157,7 @@ jobs:
         env:
           EC2_PUBLIC_IP: ${{ needs.terraform-resources.outputs.ec2_public_ip }}
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "sudo apt install docker.io -y && sudo usermod -aG docker ubuntu"
+        run: "sudo apt install docker.io -y && sudo usermod -aG docker ubuntu"
 
       # Step 3: SSH – Deploy the Docker Container
       - name: Deploy Container
@@ -169,9 +166,7 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_PUBLIC_IP "
+          "
             sudo docker stop online_shop || true
             sudo docker rm online_shop || true
             sudo docker pull ${DOCKER_USERNAME}/online_shop:latest
