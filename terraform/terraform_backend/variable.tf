@@ -9,13 +9,13 @@ variable "aws_region" {
 variable "aws_s3_bucket_name" {
   description = "The name of the S3 bucket for storing Terraform state files securely."
   type        = string
-  default     = "github-actions-buckets"
+  default     = "github-actions-buckets-new"
 }
 
 variable "aws_dynamodb_table_name" {
   description = "The name of the DynamoDB table used for state locking to ensure consistency and prevent race conditions."
   type        = string
-  default     = "github-actions-dbs"
+  default     = "github-actions-dbs-new"
 }
 
 variable "aws_db_billing_mode" {

@@ -243,7 +243,7 @@ jobs:
           smtp-port: 465
           smtp-secure: true
           from-email: ${{ secrets.MAIL_FROM }}
-          to-email: <RECEIVER_EMAIL_ADDRESS>,<OHTER_RECEIVER_EMAIL_ADDRESS> # Add multiple email addresses separated by commas
+          to-email: amitabhdevops2024@gmail.com # Add multiple email addresses separated by commas
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "CI/CD Pipeline Notification: ${{ github.workflow }} - ${{ steps.pipeline-status.outputs.result }}"
