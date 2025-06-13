@@ -112,25 +112,17 @@ jobs:
             echo "❌ DynamoDB table not found: ${{ secrets.AWS_DYNAMODB_TABLE }}"
           fi
 
-      # Step 5: Empty S3 bucket if it exists
-      - name: Empty S3 Bucket
-        if: steps.check-resources.outputs.s3_exists == 'true'
-        run: |
-          echo "Emptying S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
-          aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
-          echo "S3 bucket emptied successfully"
-        continue-on-error: true
-
-      # Step 6: Destroy S3 bucket directly via AWS CLI
+      # Step 5: Destroy S3 bucket directly via AWS CLI
       - name: Destroy S3 Bucket via AWS CLI
         if: steps.check-resources.outputs.s3_exists == 'true'
         run: |
           echo "Destroying S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
+          echo "⚠️  Note: Bucket should be manually emptied before running this workflow"
           aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
           echo "S3 bucket destruction attempted"
         continue-on-error: true
 
-      # Step 7: Destroy DynamoDB table directly via AWS CLI
+      # Step 6: Destroy DynamoDB table directly via AWS CLI
       - name: Destroy DynamoDB Table via AWS CLI
         if: steps.check-resources.outputs.dynamodb_exists == 'true'
         run: |
@@ -139,7 +131,7 @@ jobs:
           echo "DynamoDB table destruction attempted"
         continue-on-error: true
 
-      # Step 8: Wait for resources to be fully deleted
+      # Step 7: Wait for resources to be fully deleted
       - name: Wait for Resource Deletion
         run: |
           echo "Waiting for resources to be fully deleted..."
@@ -170,15 +162,6 @@ jobs:
               sleep 10
             done
           fi
-
-      # Step 9: Try Terraform destroy as backup (in case some resources are still managed)
-      - name: Terraform Destroy (Backup Method)
-        run: |
-          echo "Attempting Terraform destroy as backup..."
-          terraform init || true
-          terraform destroy --auto-approve -var="create_backend=true" || true
-        working-directory: terraform/terraform_backend
-        continue-on-error: true
 
   ###########################################################################
   # Job 3: Verify Cleanup
