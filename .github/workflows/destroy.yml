@@ -1,10 +1,10 @@
-name: Destroy All Infrastructure
+name: Destroy Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type 'destroy' to confirm"
+        description: 'Type "destroy" to confirm destruction'
         required: true
         type: string
 
@@ -12,27 +12,20 @@ env:
   AWS_REGION: eu-west-1
 
 jobs:
-  ###########################################################################
-  # Job 1: Destroy Application Resources
-  ###########################################################################
-  destroy-resources:
-    name: Destroy Application Resources
+  # Job 1: Destroy Main Infrastructure
+  destroy-infrastructure:
+    name: Destroy Infrastructure
     runs-on: ubuntu-latest
     if: github.event.inputs.confirm == 'destroy'
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          ref: github-action
 
-      # Step 2: Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: latest
+          terraform_version: "1.6.0"
 
-      # Step 3: Configure AWS Credentials
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,218 +33,140 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4: Verify AWS CLI
-      - name: Check AWS CLI Version
-        run: aws --version
-
-      # Step 5: Initialize Terraform (Application Resources)
-      - name: Initialize Terraform (Application Resources)
-        run: terraform init
-        working-directory: terraform/terraform_resources
-
-      # Step 6: Plan destruction (for review)
-      - name: Plan Terraform Destroy
-        run: terraform plan -destroy
-        working-directory: terraform/terraform_resources
-
-      # Step 7: Destroy Application Resources
-      - name: Destroy Application Resources
-        run: terraform destroy --auto-approve
-        working-directory: terraform/terraform_resources
-
-  ###########################################################################
-  # Job 2: Destroy Backend Resources
-  ###########################################################################
-  destroy-backend:
-    name: Destroy Backend Resources
-    runs-on: ubuntu-latest
-    needs: destroy-resources
-    if: github.event.inputs.confirm == 'destroy'
-    steps:
-      # Step 1: Checkout the repository
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          ref: github-action
-
-      # Step 2: Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: latest
-
-      # Step 3: Configure AWS Credentials
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Step 4: Check if backend resources exist
-      - name: Check Backend Resources
-        id: check-backend
+      - name: Destroy Main Infrastructure
         run: |
-          echo "Checking for existing backend resources..."
+          echo "🔥 Destroying main infrastructure..."
+          cd infrastructure/main
+          
+          # Create backend config
+          cat > backend.hcl << EOF
+          bucket         = "${{ secrets.STATE_BUCKET_NAME }}"
+          key            = "terraform.tfstate"
+          region         = "${{ env.AWS_REGION }}"
+          dynamodb_table = "${{ secrets.DYNAMODB_TABLE_NAME }}"
+          encrypt        = true
+          EOF
+          
+          # Initialize with backend
+          terraform init -backend-config=backend.hcl
+          
+          # Destroy infrastructure
+          terraform destroy -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
+          
+          echo "✅ Main infrastructure destroyed"
+
+  # Job 2: Destroy Backend Infrastructure
+  destroy-backend:
+    name: Destroy Backend
+    runs-on: ubuntu-latest
+    needs: destroy-infrastructure
+    if: github.event.inputs.confirm == 'destroy'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Empty S3 Bucket
+        run: |
+          echo "🗑️  Emptying S3 bucket..."
+          
+          # Delete all object versions
+          aws s3api list-object-versions \
+            --bucket "${{ secrets.STATE_BUCKET_NAME }}" \
+            --query 'Versions[].{Key: Key, VersionId: VersionId}' \
+            --output json | \
+          jq -r '.[] | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" $line || true
+            fi
+          done
+          
+          # Delete all delete markers
+          aws s3api list-object-versions \
+            --bucket "${{ secrets.STATE_BUCKET_NAME }}" \
+            --query 'DeleteMarkers[].{Key: Key, VersionId: VersionId}' \
+            --output json | \
+          jq -r '.[] | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" $line || true
+            fi
+          done
+          
+          # Remove any remaining objects
+          aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive || true
+          
+          echo "✅ S3 bucket emptied"
+        continue-on-error: true
+
+      - name: Destroy Backend Infrastructure
+        run: |
+          echo "🔥 Destroying backend infrastructure..."
+          cd infrastructure/backend
+          
+          # Initialize Terraform
+          terraform init
+          
+          # Destroy backend
+          terraform destroy -auto-approve \
+            -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
+            -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
+            -var="aws_region=${{ env.AWS_REGION }}"
+          
+          echo "✅ Backend infrastructure destroyed"
+
+  # Job 3: Verify Cleanup
+  verify-cleanup:
+    name: Verify Cleanup
+    runs-on: ubuntu-latest
+    needs: [destroy-infrastructure, destroy-backend]
+    if: github.event.inputs.confirm == 'destroy'
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify All Resources Destroyed
+        run: |
+          echo "🔍 Verifying cleanup..."
+          CLEANUP_STATUS="COMPLETE"
           
           # Check S3 bucket
-          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "s3_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ S3 bucket exists: ${{ secrets.AWS_S3_BUCKET }}"
+          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" 2>/dev/null; then
+            echo "⚠️  S3 bucket still exists"
+            CLEANUP_STATUS="PARTIAL"
           else
-            echo "s3_exists=false" >> $GITHUB_OUTPUT
-            echo "❌ S3 bucket not found: ${{ secrets.AWS_S3_BUCKET }}"
+            echo "✅ S3 bucket destroyed"
           fi
           
           # Check DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "dynamodb_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ DynamoDB table exists: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          else
-            echo "dynamodb_exists=false" >> $GITHUB_OUTPUT
-            echo "❌ DynamoDB table not found: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          fi
-
-      # Step 5: Try Terraform approach first (if resources exist)
-      - name: Try Terraform Destroy
-        if: steps.check-backend.outputs.s3_exists == 'true' || steps.check-backend.outputs.dynamodb_exists == 'true'
-        run: |
-          echo "Attempting Terraform-based destruction..."
-          
-          # Initialize Terraform (this might fail, that's OK)
-          if terraform init; then
-            echo "Terraform init successful"
-            
-            # Try to import existing resources into state
-            if [ "${{ steps.check-backend.outputs.s3_exists }}" = "true" ]; then
-              terraform import 'aws_s3_bucket.terraform_state[0]' "${{ secrets.AWS_S3_BUCKET }}" || true
-            fi
-            
-            if [ "${{ steps.check-backend.outputs.dynamodb_exists }}" = "true" ]; then
-              terraform import 'aws_dynamodb_table.terraform_locks[0]' "${{ secrets.AWS_DYNAMODB_TABLE }}" || true
-            fi
-            
-            # Empty S3 bucket before destroy
-            if [ "${{ steps.check-backend.outputs.s3_exists }}" = "true" ]; then
-              echo "Emptying S3 bucket..."
-              aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
-            fi
-            
-            # Try Terraform destroy
-            terraform destroy --auto-approve -var="create_backend=true" || echo "Terraform destroy failed, will use CLI method"
-          else
-            echo "Terraform init failed, will use CLI method"
-          fi
-        working-directory: terraform/terraform_backend
-        continue-on-error: true
-
-      # Step 6: Fallback to direct AWS CLI deletion
-      - name: Direct AWS CLI Cleanup
-        run: |
-          echo "Using direct AWS CLI cleanup as fallback..."
-          
-          # Delete S3 bucket
-          if [ "${{ steps.check-backend.outputs.s3_exists }}" = "true" ]; then
-            echo "Deleting S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
-            # Empty bucket first
-            aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
-            # Delete bucket
-            aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
-          fi
-          
-          # Delete DynamoDB table
-          if [ "${{ steps.check-backend.outputs.dynamodb_exists }}" = "true" ]; then
-            echo "Deleting DynamoDB table: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-            aws dynamodb delete-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
-          fi
-        continue-on-error: true
-
-      # Step 7: Wait for deletion to complete
-      - name: Wait for Deletion
-        run: |
-          echo "Waiting for resources to be fully deleted..."
-          sleep 30
-          
-          # Wait for S3 bucket deletion
-          if [ "${{ steps.check-backend.outputs.s3_exists }}" = "true" ]; then
-            echo "Waiting for S3 bucket deletion..."
-            for i in {1..12}; do
-              if ! aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-                echo "✅ S3 bucket successfully deleted"
-                break
-              fi
-              echo "Still waiting for S3 bucket deletion... (attempt $i/12)"
-              sleep 10
-            done
-          fi
-          
-          # Wait for DynamoDB table deletion
-          if [ "${{ steps.check-backend.outputs.dynamodb_exists }}" = "true" ]; then
-            echo "Waiting for DynamoDB table deletion..."
-            for i in {1..12}; do
-              if ! aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-                echo "✅ DynamoDB table successfully deleted"
-                break
-              fi
-              echo "Still waiting for DynamoDB table deletion... (attempt $i/12)"
-              sleep 10
-            done
-          fi
-
-  ###########################################################################
-  # Job 3: Verify Cleanup
-  ###########################################################################
-  cleanup-verification:
-    name: Verify Cleanup
-    runs-on: ubuntu-latest
-    needs: [destroy-resources, destroy-backend]
-    if: github.event.inputs.confirm == 'destroy'
-    steps:
-      # Step 1: Configure AWS Credentials
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Step 2: Comprehensive Resource Verification
-      - name: Verify All Resources Destroyed
-        run: |
-          echo "🔍 Performing comprehensive cleanup verification..."
-          CLEANUP_STATUS="COMPLETE"
-          
-          # Check if S3 bucket still exists
-          echo "Checking S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
-          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  S3 bucket '${{ secrets.AWS_S3_BUCKET }}' still exists"
+          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" 2>/dev/null; then
+            echo "⚠️  DynamoDB table still exists"
             CLEANUP_STATUS="PARTIAL"
-            
-            # Try to delete it one more time
-            echo "Attempting final S3 bucket deletion..."
-            aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
-            aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
           else
-            echo "✅ S3 bucket '${{ secrets.AWS_S3_BUCKET }}' successfully destroyed"
+            echo "✅ DynamoDB table destroyed"
           fi
           
-          # Check if DynamoDB table still exists
-          echo "Checking DynamoDB table: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          if aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  DynamoDB table '${{ secrets.AWS_DYNAMODB_TABLE }}' still exists"
-            CLEANUP_STATUS="PARTIAL"
-            
-            # Try to delete it one more time
-            echo "Attempting final DynamoDB table deletion..."
-            aws dynamodb delete-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
-          else
-            echo "✅ DynamoDB table '${{ secrets.AWS_DYNAMODB_TABLE }}' successfully destroyed"
-          fi
-          
-          # Check for any remaining EC2 instances with our tags
-          echo "Checking for remaining EC2 instances..."
+          # Check for remaining EC2 instances
           INSTANCES=$(aws ec2 describe-instances \
-            --region "${{ env.AWS_REGION }}" \
             --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,pending,stopping,stopped" \
             --query 'Reservations[*].Instances[*].InstanceId' \
             --output text)
@@ -260,76 +175,37 @@ jobs:
             echo "⚠️  Found remaining EC2 instances: $INSTANCES"
             CLEANUP_STATUS="PARTIAL"
           else
-            echo "✅ No remaining EC2 instances found"
+            echo "✅ No remaining EC2 instances"
           fi
           
-          # Check for remaining security groups
-          echo "Checking for remaining security groups..."
-          SECURITY_GROUPS=$(aws ec2 describe-security-groups \
-            --region "${{ env.AWS_REGION }}" \
-            --filters "Name=tag:Project,Values=online-shop" \
-            --query 'SecurityGroups[*].GroupId' \
-            --output text)
+          echo "Cleanup status: $CLEANUP_STATUS"
           
-          if [ -n "$SECURITY_GROUPS" ] && [ "$SECURITY_GROUPS" != "None" ]; then
-            echo "⚠️  Found remaining security groups: $SECURITY_GROUPS"
-            CLEANUP_STATUS="PARTIAL"
-          else
-            echo "✅ No remaining security groups found"
-          fi
-          
-          # Check for remaining key pairs
-          echo "Checking for remaining key pairs..."
-          KEY_PAIRS=$(aws ec2 describe-key-pairs \
-            --region "${{ env.AWS_REGION }}" \
-            --filters "Name=key-name,Values=github-action-key" \
-            --query 'KeyPairs[*].KeyName' \
-            --output text)
-          
-          if [ -n "$KEY_PAIRS" ] && [ "$KEY_PAIRS" != "None" ]; then
-            echo "⚠️  Found remaining key pairs: $KEY_PAIRS"
-            CLEANUP_STATUS="PARTIAL"
-          else
-            echo "✅ No remaining key pairs found"
-          fi
-          
-          # Final status report
-          echo "CLEANUP_STATUS=$CLEANUP_STATUS" >> $GITHUB_ENV
           if [ "$CLEANUP_STATUS" = "COMPLETE" ]; then
             echo "🎉 All resources destroyed successfully!"
-            echo "💰 Your AWS bill should now be significantly reduced"
           else
-            echo "⚠️  Cleanup completed with some resources remaining"
-            echo "Please check AWS console for any remaining resources"
-            echo "You may need to manually delete some resources"
+            echo "⚠️  Some resources may still exist. Please check AWS console."
           fi
-          
-          echo "Cleanup verification completed with status: $CLEANUP_STATUS"
 
-  ###########################################################################
-  # Job 4: Send Notification Email
-  ###########################################################################
-  send-notification:
-    name: Send Email Notification
+  # Job 4: Send Notification
+  notify:
+    name: Send Notification
     runs-on: ubuntu-latest
-    needs: [destroy-resources, destroy-backend, cleanup-verification]
+    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
     if: always() && github.event.inputs.confirm == 'destroy'
     steps:
-      # Step 1: Determine overall pipeline status
-      - name: Determine Pipeline Status
-        id: pipeline-status
+      - name: Determine Status
+        id: status
         run: |
-          if [[ "${{ needs.destroy-resources.result }}" == "success" ]] && \
+          if [[ "${{ needs.destroy-infrastructure.result }}" == "success" ]] && \
              [[ "${{ needs.destroy-backend.result }}" == "success" ]] && \
-             [[ "${{ needs.cleanup-verification.result }}" == "success" ]]; then
+             [[ "${{ needs.verify-cleanup.result }}" == "success" ]]; then
             echo "result=Success ✅" >> $GITHUB_OUTPUT
             echo "message=All infrastructure destroyed successfully" >> $GITHUB_OUTPUT
           else
             echo "result=Failed ❌" >> $GITHUB_OUTPUT
-            echo "message=Some resources may not have been destroyed completely" >> $GITHUB_OUTPUT
+            echo "message=Some resources may not have been destroyed" >> $GITHUB_OUTPUT
           fi
 
-      # Step 2: Send Email Notification
       - name: Send Email Notification
         uses: dawidd6/action-send-mail@v3
         with:
@@ -337,81 +213,24 @@ jobs:
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🔥 Infrastructure Destroy Notification - ${{ steps.pipeline-status.outputs.result }}"
+          subject: "🔥 Infrastructure Destroyed - ${{ steps.status.outputs.result }}"
           to: ${{ secrets.MAIL_TO }}
           from: ${{ secrets.MAIL_FROM }}
           html_body: |
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background-color: #ffffff;">
-              <h2 style="color: #d73a49; text-align: center;">🔥 Infrastructure Destroy Notification</h2>
-              
-              <div style="background-color: #fff5f5; padding: 16px; border-radius: 6px; border-left: 4px solid #d73a49;">
-                <h3 style="margin-top: 0; color: #d73a49;">Destruction Summary</h3>
-                <p><strong>Status:</strong> ${{ steps.pipeline-status.outputs.result }}</p>
-                <p><strong>Message:</strong> ${{ steps.pipeline-status.outputs.message }}</p>
-              </div>
-
-              <div style="background-color: #f6f8fa; padding: 16px; border-radius: 6px; margin-top: 16px;">
-                <table style="width: 100%; border-collapse: collapse;">
-                  <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;"><strong>Workflow</strong></td>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${{ github.workflow }}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;"><strong>Triggered by</strong></td>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${{ github.actor }}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;"><strong>Repository</strong></td>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${{ github.repository }}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;"><strong>Run Details</strong></td>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">
-                      <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" style="color: #0366d6; text-decoration: none;">
-                        View Run #${{ github.run_id }}
-                      </a>
-                    </td>
-                  </tr>
-                </table>
-              </div>
-
-              <h3 style="margin-top: 16px;">🛠 Job Statuses</h3>
-              <table style="width: 100%; border-collapse: collapse; background-color: #fff;">
-                <tr style="background-color: #f6f8fa;">
-                  <th style="padding: 10px; text-align: left;">Job</th>
-                  <th style="padding: 10px; text-align: center;">Status</th>
-                </tr>
-                <tr>
-                  <td style="padding: 10px;">Destroy Application Resources</td>
-                  <td style="padding: 10px; text-align: center; color: white; background-color: ${{ needs.destroy-resources.result == 'success' && '#28a745' || '#d73a49' }}; border-radius: 4px;">
-                    ${{ needs.destroy-resources.result }}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px;">Destroy Backend Resources</td>
-                  <td style="padding: 10px; text-align: center; color: white; background-color: ${{ needs.destroy-backend.result == 'success' && '#28a745' || '#d73a49' }}; border-radius: 4px;">
-                    ${{ needs.destroy-backend.result }}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px;">Cleanup Verification</td>
-                  <td style="padding: 10px; text-align: center; color: white; background-color: ${{ needs.cleanup-verification.result == 'success' && '#28a745' || '#d73a49' }}; border-radius: 4px;">
-                    ${{ needs.cleanup-verification.result }}
-                  </td>
-                </tr>
-              </table>
-
-              <div style="background-color: #fff3cd; padding: 16px; border-radius: 6px; margin-top: 16px; border-left: 4px solid #ffc107;">
-                <h4 style="margin-top: 0; color: #856404;">⚠️ Important Notes</h4>
-                <ul style="margin-bottom: 0; color: #856404;">
-                  <li>Please verify in AWS Console that all resources have been destroyed</li>
-                  <li>Check for any remaining charges in your AWS billing dashboard</li>
-                  <li>Some resources may take time to fully terminate</li>
-                </ul>
-              </div>
-
-              <p style="color: #6a737d; font-size: 0.9em; margin-top: 20px; text-align: center;">
-                This email was sent automatically by <strong>GitHub Actions</strong>.
-              </p>
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+              <h2 style="color: #d73a49;">🔥 Infrastructure Destruction Complete</h2>
+              <p><strong>Status:</strong> ${{ steps.status.outputs.result }}</p>
+              <p><strong>Message:</strong> ${{ steps.status.outputs.message }}</p>
+              <p><strong>Repository:</strong> ${{ github.repository }}</p>
+              <p><strong>Triggered by:</strong> ${{ github.actor }}</p>
+              <p><strong>Timestamp:</strong> ${{ github.event.head_commit.timestamp }}</p>
+              <hr>
+              <h3>Job Results:</h3>
+              <ul>
+                <li>Destroy Infrastructure: ${{ needs.destroy-infrastructure.result }}</li>
+                <li>Destroy Backend: ${{ needs.destroy-backend.result }}</li>
+                <li>Verify Cleanup: ${{ needs.verify-cleanup.result }}</li>
+              </ul>
+              <p><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Details</a></p>
             </div>
         continue-on-error: true

@@ -1,0 +1,238 @@
+name: Deploy Online Shop
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  # Job 1: Setup Backend Infrastructure
+  setup-backend:
+    name: Setup Backend
+    runs-on: ubuntu-latest
+    outputs:
+      backend_ready: ${{ steps.backend-check.outputs.ready }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check Backend Status
+        id: backend-check
+        run: |
+          # Check if S3 bucket exists
+          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" 2>/dev/null; then
+            echo "Backend already exists"
+            echo "ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "Backend needs to be created"
+            echo "ready=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Backend Infrastructure
+        if: steps.backend-check.outputs.ready == 'false'
+        run: |
+          echo "Creating backend infrastructure..."
+          cd infrastructure/backend
+          terraform init
+          terraform apply -auto-approve \
+            -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
+            -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
+            -var="aws_region=${{ env.AWS_REGION }}"
+
+  # Job 2: Build and Push Docker Image
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: setup-backend
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/online-shop
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 3: Deploy Infrastructure
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [setup-backend, build-image]
+    outputs:
+      instance-ip: ${{ steps.deploy.outputs.instance_ip }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Infrastructure
+        id: deploy
+        run: |
+          echo "Deploying infrastructure..."
+          cd infrastructure/main
+          
+          # Create backend config
+          cat > backend.hcl << EOF
+          bucket         = "${{ secrets.STATE_BUCKET_NAME }}"
+          key            = "terraform.tfstate"
+          region         = "${{ env.AWS_REGION }}"
+          dynamodb_table = "${{ secrets.DYNAMODB_TABLE_NAME }}"
+          encrypt        = true
+          EOF
+          
+          # Initialize with backend
+          terraform init -backend-config=backend.hcl
+          
+          # Plan infrastructure
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
+          
+          # Apply infrastructure
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
+          
+          # Get instance IP
+          INSTANCE_IP=$(terraform output -raw instance_public_ip)
+          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          echo "Instance IP: $INSTANCE_IP"
+
+  # Job 4: Deploy Application
+  deploy-application:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, build-image]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy Application
+        run: |
+          echo "Deploying application to ${{ needs.deploy-infrastructure.outputs.instance-ip }}"
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Wait for instance to be ready
+          echo "Waiting for instance to be ready..."
+          sleep 60
+          
+          # Deploy using our script
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh \
+            "${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest" \
+            "${{ needs.deploy-infrastructure.outputs.instance-ip }}" \
+            "~/.ssh/deploy_key"
+
+  # Job 5: Health Check
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: deploy-application
+    steps:
+      - name: Application Health Check
+        run: |
+          echo "Performing health check..."
+          INSTANCE_IP="${{ needs.deploy-infrastructure.outputs.instance-ip }}"
+          
+          echo "Checking application at: http://$INSTANCE_IP"
+          
+          # Wait for application to be ready
+          for i in {1..20}; do
+            if curl -f -s "http://$INSTANCE_IP" > /dev/null; then
+              echo "✅ Application is healthy!"
+              echo "🌐 Application URL: http://$INSTANCE_IP"
+              exit 0
+            else
+              echo "Health check attempt $i/20..."
+              sleep 15
+            fi
+          done
+          
+          echo "❌ Health check failed after 20 attempts"
+          exit 1
+
+  # Job 6: Notify
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    needs: [setup-backend, build-image, deploy-infrastructure, deploy-application, health-check]
+    if: always()
+    steps:
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚀 Online Shop Deployment - ${{ job.status }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: ${{ secrets.MAIL_FROM }}
+          html_body: |
+            <h2>Deployment Status: ${{ job.status }}</h2>
+            <p>Repository: ${{ github.repository }}</p>
+            <p>Branch: ${{ github.ref_name }}</p>
+            <p>Commit: ${{ github.sha }}</p>
+            <p>Triggered by: ${{ github.actor }}</p>
+        continue-on-error: true
