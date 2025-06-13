@@ -21,7 +21,7 @@ variable "aws_instance_name" {
 variable "aws_instance_os_type" {
   description = "Defines the operating system image filter for selecting an appropriate AMI (e.g., Ubuntu 20.04)."
   type        = string
-  default     = "ubuntu/images/hvm-ssd/*amd64*"
+  default     = "ubuntu/images/hvm-ssd/ubuntu-*-amd64-server-*"
 }
 
 variable "aws_ami_owners" {

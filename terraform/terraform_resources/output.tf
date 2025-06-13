@@ -32,3 +32,13 @@ output "application_url" {
   value       = "http://${aws_instance.github_action_instance.public_ip}"
   description = "The URL to access the deployed application."
 }
+
+output "ami_id" {
+  value       = data.aws_ami.ubuntu.id
+  description = "The AMI ID used for the EC2 instance."
+}
+
+output "ami_name" {
+  value       = data.aws_ami.ubuntu.name
+  description = "The AMI name used for the EC2 instance."
+}
