@@ -121,31 +121,47 @@ resource "aws_security_group" "terraform_sg" {
   }
 }
 
-# Create an EC2 instance with improved configuration
+# Get the default VPC for the region
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Get default subnets with more specific filtering
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+  
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+}
+
+# Get the first available subnet
+data "aws_subnet" "selected" {
+  id = data.aws_subnets.default.ids[0]
+}
+
+# Create an EC2 instance with simplified configuration
 resource "aws_instance" "github_action_instance" {
   ami                    = local.final_ami_id
   instance_type          = var.aws_instance_type
   key_name              = aws_key_pair.terraform_key.key_name
   vpc_security_group_ids = [aws_security_group.terraform_sg.id]
+  subnet_id             = data.aws_subnet.selected.id
   
-  # Use a specific subnet for better control
-  subnet_id = data.aws_subnets.default.ids[0]
+  # Ensure public IP assignment
+  associate_public_ip_address = true
   
-  # Enable detailed monitoring
-  monitoring = true
+  # Basic monitoring
+  monitoring = false
   
-  # Instance metadata service v2 (more secure)
-  metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
-    http_put_response_hop_limit = 1
-  }
-
   # Root block device configuration
   root_block_device {
     volume_size           = var.aws_instance_storage_size
     volume_type           = var.aws_instance_volume_type
-    encrypted             = true
     delete_on_termination = true
 
     tags = {

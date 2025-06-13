@@ -42,3 +42,19 @@ output "ami_name" {
   value       = data.aws_ami.ubuntu.name
   description = "The AMI name used for the EC2 instance."
 }
+
+# Debug outputs
+output "vpc_id" {
+  value       = data.aws_vpc.default.id
+  description = "The VPC ID being used."
+}
+
+output "subnet_id" {
+  value       = data.aws_subnet.selected.id
+  description = "The subnet ID being used."
+}
+
+output "subnet_az" {
+  value       = data.aws_subnet.selected.availability_zone
+  description = "The availability zone of the selected subnet."
+}

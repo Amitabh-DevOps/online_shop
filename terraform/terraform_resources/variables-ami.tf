@@ -2,7 +2,7 @@
 variable "fallback_ami_id" {
   description = "Fallback AMI ID to use if dynamic lookup fails"
   type        = string
-  default     = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI (HVM) - eu-west-1
+  default     = "ami-07b5312224c6b20e7" # Use the Ubuntu AMI that was found
 }
 
 variable "use_fallback_ami" {
@@ -11,18 +11,18 @@ variable "use_fallback_ami" {
   default     = false
 }
 
-# Local values for AMI selection
+# Local values for AMI selection - simplified
 locals {
-  # Use fallback AMI if specified, otherwise use dynamic lookup
-  final_ami_id = var.use_fallback_ami ? var.fallback_ami_id : data.aws_ami.ubuntu.id
+  # Always use the Ubuntu AMI that was found since it's working
+  final_ami_id = data.aws_ami.ubuntu.id
 }
 
 # Output the selected AMI for debugging
 output "selected_ami_info" {
   value = {
     ami_id   = local.final_ami_id
-    ami_name = var.use_fallback_ami ? "Fallback AMI" : data.aws_ami.ubuntu.name
-    source   = var.use_fallback_ami ? "fallback" : "dynamic"
+    ami_name = data.aws_ami.ubuntu.name
+    source   = "dynamic"
   }
   description = "Information about the selected AMI"
 }

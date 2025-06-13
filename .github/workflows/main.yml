@@ -134,12 +134,12 @@ jobs:
 
       # Execute Terraform plan to review changes.
       - name: Terraform Plan
-        run: terraform plan -var="use_fallback_ami=true"
+        run: terraform plan
         working-directory: terraform/terraform_resources
 
       # Apply the Terraform changes.
       - name: Apply Terraform Changes
-        run: terraform apply --auto-approve -var="use_fallback_ami=true"
+        run: terraform apply --auto-approve
         working-directory: terraform/terraform_resources
 
       # Capture the EC2 instance's public IP from Terraform outputs.
