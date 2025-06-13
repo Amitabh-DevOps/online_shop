@@ -50,12 +50,22 @@ data "aws_vpc" "default" {
   default = true
 }
 
-# Get default subnets
+# Get default subnets with filtering
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+  
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+}
+
+# Get the first available subnet
+data "aws_subnet" "selected" {
+  id = data.aws_subnets.default.ids[0]
 }
 
 # Create a security group with improved security
@@ -119,29 +129,6 @@ resource "aws_security_group" "terraform_sg" {
     create_before_destroy = true
     ignore_changes       = [tags]
   }
-}
-
-# Get the default VPC for the region
-data "aws_vpc" "default" {
-  default = true
-}
-
-# Get default subnets with more specific filtering
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-  
-  filter {
-    name   = "default-for-az"
-    values = ["true"]
-  }
-}
-
-# Get the first available subnet
-data "aws_subnet" "selected" {
-  id = data.aws_subnets.default.ids[0]
 }
 
 # Create an EC2 instance with simplified configuration
