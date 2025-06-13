@@ -1,12 +1,22 @@
 terraform {
+  required_version = ">= 1.0"
   required_providers {
     aws = {
-      source = "hashicorp/aws"
-      version = "5.86.0"
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
   }
 }
+
 # Configure the AWS Provider
 provider "aws" {
-  region = "eu-west-1"
+  region = var.aws_region
+  
+  default_tags {
+    tags = {
+      Environment = "production"
+      Project     = "online-shop"
+      ManagedBy   = "terraform"
+    }
+  }
 }

@@ -6,199 +6,220 @@ on:
       confirm:
         description: "Type 'destroy' to confirm"
         required: true
+        type: string
+
+env:
+  AWS_REGION: eu-west-1
+  S3_BUCKET: github-actions-buckets-new
+  DYNAMODB_TABLE: github-actions-dbs-new
 
 jobs:
+  ###########################################################################
+  # Job 1: Destroy Application Resources
+  ###########################################################################
   destroy-resources:
     name: Destroy Application Resources
     runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'destroy'
     steps:
-      #####################################################################
-      # Step 1: Checkout, Setup Terraform, and Configure AWS Credentials
-      #####################################################################
+      # Step 1: Checkout the repository
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: github-action
 
+      # Step 2: Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: latest
 
+      # Step 3: Configure AWS Credentials
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      #####################################################################
-      # Step 2: Initialize Terraform (Application Resources)
-      #####################################################################
+      # Step 4: Verify AWS CLI
+      - name: Check AWS CLI Version
+        run: aws --version
+
+      # Step 5: Initialize Terraform (Application Resources)
       - name: Initialize Terraform (Application Resources)
         run: terraform init
         working-directory: terraform/terraform_resources
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
 
-      #####################################################################
-      # Step 3: Destroy Application Resources (only if confirmed)
-      #####################################################################
+      # Step 6: Plan destruction (for review)
+      - name: Plan Terraform Destroy
+        run: terraform plan -destroy
+        working-directory: terraform/terraform_resources
+
+      # Step 7: Destroy Application Resources
       - name: Destroy Application Resources
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
         run: terraform destroy --auto-approve
         working-directory: terraform/terraform_resources
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
 
-      #####################################################################
-      # (Optional) Post-Destruction Cleanup Step
-      # Add any cleanup commands if needed here.
-      #####################################################################
-      - name: Cleanup Temporary Files (if any)
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        run: echo "No temporary files to cleanup."
-
+  ###########################################################################
+  # Job 2: Destroy Backend Resources
+  ###########################################################################
   destroy-backend:
     name: Destroy Backend Resources
     runs-on: ubuntu-latest
     needs: destroy-resources
+    if: github.event.inputs.confirm == 'destroy'
     steps:
-      #####################################################################
-      # Step 1: Checkout, Setup Terraform, and Configure AWS Credentials
-      #####################################################################
+      # Step 1: Checkout the repository
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: github-action
 
+      # Step 2: Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: latest
 
+      # Step 3: Configure AWS Credentials
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      #####################################################################
-      # Step 2: Initialize Terraform (Backend Resources) and Debug Connectivity
-      #####################################################################
+      # Step 4: Empty S3 bucket before destroying
+      - name: Empty S3 Bucket
+        run: |
+          echo "Emptying S3 bucket: ${{ env.S3_BUCKET }}"
+          aws s3 rm s3://${{ env.S3_BUCKET }} --recursive || true
+          echo "S3 bucket emptied successfully"
+        continue-on-error: true
+
+      # Step 5: Initialize Terraform (Backend Resources)
       - name: Initialize Terraform (Backend Resources)
         run: terraform init
         working-directory: terraform/terraform_backend
-        env:
-          TF_VAR_create_backend: "true"
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
 
-      # Debug: List available S3 buckets to verify connectivity.
-      - name: Debug - List S3 Buckets
-        run: aws s3 ls
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-
-      # Debug: List available DynamoDB tables to verify connectivity.
-      - name: Debug - List DynamoDB Tables
-        run: aws dynamodb list-tables
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-
-      #####################################################################
-      # Step 3: Import, Empty, and Destroy Backend Resources (only if confirmed)
-      #####################################################################
-      - name: Import S3 Bucket (if exists)
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        continue-on-error: true
-        run: terraform import 'aws_s3_bucket.terraform_aws_s3_bucket[0]' ${{ secrets.AWS_S3_BUCKET }}
+      # Step 6: Plan destruction (for review)
+      - name: Plan Backend Destroy
+        run: terraform plan -destroy -var="create_backend=true"
         working-directory: terraform/terraform_backend
-        env:
-          TF_VAR_create_backend: "true"
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
 
-      - name: Import DynamoDB Table (if exists)
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        continue-on-error: true
-        run: terraform import 'aws_dynamodb_table.terraform_aws_db[0]' ${{ secrets.AWS_DYNAMODB_TABLE }}
-        working-directory: terraform/terraform_backend
-        env:
-          TF_VAR_create_backend: "true"
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
-
-      - name: Empty S3 Bucket
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        run: aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-
+      # Step 7: Destroy Backend Resources
       - name: Destroy Backend Resources
-        if: ${{ github.event.inputs.confirm == 'destroy' }}
-        run: terraform destroy --auto-approve 
+        run: terraform destroy --auto-approve -var="create_backend=true"
         working-directory: terraform/terraform_backend
-        env:
-          TF_VAR_create_backend: "true"
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: eu-west-1
-          # TF_LOG: DEBUG
 
+  ###########################################################################
+  # Job 3: Verify Cleanup
+  ###########################################################################
+  cleanup-verification:
+    name: Verify Cleanup
+    runs-on: ubuntu-latest
+    needs: [destroy-resources, destroy-backend]
+    if: github.event.inputs.confirm == 'destroy'
+    steps:
+      # Step 1: Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Step 2: Verify Resources Destroyed
+      - name: Verify Resources Destroyed
+        run: |
+          echo "🔍 Verifying that resources have been destroyed..."
+          
+          # Check if S3 bucket still exists
+          if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "⚠️  S3 bucket '${{ env.S3_BUCKET }}' still exists"
+            CLEANUP_STATUS="PARTIAL"
+          else
+            echo "✅ S3 bucket '${{ env.S3_BUCKET }}' destroyed successfully"
+          fi
+          
+          # Check if DynamoDB table still exists
+          if aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "⚠️  DynamoDB table '${{ env.DYNAMODB_TABLE }}' still exists"
+            CLEANUP_STATUS="PARTIAL"
+          else
+            echo "✅ DynamoDB table '${{ env.DYNAMODB_TABLE }}' destroyed successfully"
+          fi
+          
+          # Check for any remaining EC2 instances with our tags
+          INSTANCES=$(aws ec2 describe-instances \
+            --region "${{ env.AWS_REGION }}" \
+            --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,pending,stopping,stopped" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text)
+          
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "⚠️  Found remaining EC2 instances: $INSTANCES"
+            CLEANUP_STATUS="PARTIAL"
+          else
+            echo "✅ No remaining EC2 instances found"
+          fi
+          
+          # Final status
+          if [ "$CLEANUP_STATUS" = "PARTIAL" ]; then
+            echo "⚠️  Cleanup completed with some resources remaining"
+            echo "Please check AWS console for any remaining resources"
+          else
+            echo "🎉 All resources destroyed successfully!"
+          fi
+          
+          echo "Cleanup verification completed"
+
+  ###########################################################################
+  # Job 4: Send Notification Email
+  ###########################################################################
   send-notification:
     name: Send Email Notification
     runs-on: ubuntu-latest
-    needs: [destroy-resources, destroy-backend]
-    if: always()  # Runs regardless of previous job outcomes
+    needs: [destroy-resources, destroy-backend, cleanup-verification]
+    if: always() && github.event.inputs.confirm == 'destroy'
     steps:
-      # 1) Determine overall pipeline status
+      # Step 1: Determine overall pipeline status
       - name: Determine Pipeline Status
         id: pipeline-status
         run: |
-          # We'll check the results of the two jobs we "need"
-          # and create an output variable "result" accordingly.
-          if [ "${{ needs.destroy-resources.result }}" = "success" ] && [ "${{ needs.destroy-backend.result }}" = "success" ]; then
+          if [[ "${{ needs.destroy-resources.result }}" == "success" ]] && \
+             [[ "${{ needs.destroy-backend.result }}" == "success" ]] && \
+             [[ "${{ needs.cleanup-verification.result }}" == "success" ]]; then
             echo "result=Success ✅" >> $GITHUB_OUTPUT
+            echo "message=All infrastructure destroyed successfully" >> $GITHUB_OUTPUT
           else
             echo "result=Failed ❌" >> $GITHUB_OUTPUT
+            echo "message=Some resources may not have been destroyed completely" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send Email
-        uses: hilarion5/send-mail@v1
+      # Step 2: Send Email Notification
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
         with:
-          smtp-server: smtp.gmail.com
-          smtp-port: 465
-          smtp-secure: true
-          from-email: ${{ secrets.MAIL_FROM }}
-          to-email: amitabhdevops2024@gmail.com # Add multiple email addresses separated by commas
+          server_address: smtp.gmail.com
+          server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "Destroy Workflow Notification: ${{ github.workflow }} - ${{ steps.pipeline-status.outputs.result }}"
-          body: ""
-          html: |
+          subject: "🔥 Infrastructure Destroy Notification - ${{ steps.pipeline-status.outputs.result }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: ${{ secrets.MAIL_FROM }}
+          html_body: |
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background-color: #ffffff;">
-              <h2 style="color: #24292e; text-align: center;">🔥 Destroy Workflow Notification</h2>
-              <div style="background-color: #f6f8fa; padding: 16px; border-radius: 6px;">
+              <h2 style="color: #d73a49; text-align: center;">🔥 Infrastructure Destroy Notification</h2>
+              
+              <div style="background-color: #fff5f5; padding: 16px; border-radius: 6px; border-left: 4px solid #d73a49;">
+                <h3 style="margin-top: 0; color: #d73a49;">Destruction Summary</h3>
+                <p><strong>Status:</strong> ${{ steps.pipeline-status.outputs.result }}</p>
+                <p><strong>Message:</strong> ${{ steps.pipeline-status.outputs.message }}</p>
+              </div>
+
+              <div style="background-color: #f6f8fa; padding: 16px; border-radius: 6px; margin-top: 16px;">
                 <table style="width: 100%; border-collapse: collapse;">
                   <tr>
                     <td style="padding: 10px; border-bottom: 1px solid #ddd;"><strong>Workflow</strong></td>
@@ -222,6 +243,7 @@ jobs:
                   </tr>
                 </table>
               </div>
+
               <h3 style="margin-top: 16px;">🛠 Job Statuses</h3>
               <table style="width: 100%; border-collapse: collapse; background-color: #fff;">
                 <tr style="background-color: #f6f8fa;">
@@ -240,8 +262,25 @@ jobs:
                     ${{ needs.destroy-backend.result }}
                   </td>
                 </tr>
+                <tr>
+                  <td style="padding: 10px;">Cleanup Verification</td>
+                  <td style="padding: 10px; text-align: center; color: white; background-color: ${{ needs.cleanup-verification.result == 'success' && '#28a745' || '#d73a49' }}; border-radius: 4px;">
+                    ${{ needs.cleanup-verification.result }}
+                  </td>
+                </tr>
               </table>
+
+              <div style="background-color: #fff3cd; padding: 16px; border-radius: 6px; margin-top: 16px; border-left: 4px solid #ffc107;">
+                <h4 style="margin-top: 0; color: #856404;">⚠️ Important Notes</h4>
+                <ul style="margin-bottom: 0; color: #856404;">
+                  <li>Please verify in AWS Console that all resources have been destroyed</li>
+                  <li>Check for any remaining charges in your AWS billing dashboard</li>
+                  <li>Some resources may take time to fully terminate</li>
+                </ul>
+              </div>
+
               <p style="color: #6a737d; font-size: 0.9em; margin-top: 20px; text-align: center;">
                 This email was sent automatically by <strong>GitHub Actions</strong>.
               </p>
             </div>
+        continue-on-error: true
