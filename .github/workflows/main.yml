@@ -202,6 +202,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Setup SSH key for EC2 access
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/github-action-key
+          chmod 600 ~/.ssh/github-action-key
+          ssh-keyscan -H ${{ needs.terraform-resources.outputs.ec2_public_ip }} >> ~/.ssh/known_hosts
+
       # Deploy the application to the EC2 instance.
       - name: Deploy to EC2
         run: |
@@ -244,11 +252,11 @@ jobs:
           chmod +x deploy.sh
           
           # Copy and execute deployment script on EC2
-          scp -i terraform/terraform_resources/github-action-key \
+          scp -i ~/.ssh/github-action-key \
               -o StrictHostKeyChecking=no \
               deploy.sh ubuntu@${{ needs.terraform-resources.outputs.ec2_public_ip }}:/tmp/
           
-          ssh -i terraform/terraform_resources/github-action-key \
+          ssh -i ~/.ssh/github-action-key \
               -o StrictHostKeyChecking=no \
               ubuntu@${{ needs.terraform-resources.outputs.ec2_public_ip }} \
               'bash /tmp/deploy.sh'
