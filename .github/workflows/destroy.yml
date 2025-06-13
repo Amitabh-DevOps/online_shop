@@ -90,28 +90,97 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4: Empty S3 bucket before destroying
+      # Step 4: Check if resources exist before trying to destroy
+      - name: Check Existing Backend Resources
+        id: check-resources
+        run: |
+          echo "Checking for existing backend resources..."
+          
+          # Check S3 bucket
+          if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "S3_EXISTS=true" >> $GITHUB_ENV
+            echo "✅ S3 bucket exists: ${{ env.S3_BUCKET }}"
+          else
+            echo "S3_EXISTS=false" >> $GITHUB_ENV
+            echo "❌ S3 bucket not found: ${{ env.S3_BUCKET }}"
+          fi
+          
+          # Check DynamoDB table
+          if aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "DYNAMODB_EXISTS=true" >> $GITHUB_ENV
+            echo "✅ DynamoDB table exists: ${{ env.DYNAMODB_TABLE }}"
+          else
+            echo "DYNAMODB_EXISTS=false" >> $GITHUB_ENV
+            echo "❌ DynamoDB table not found: ${{ env.DYNAMODB_TABLE }}"
+          fi
+
+      # Step 5: Empty S3 bucket if it exists
       - name: Empty S3 Bucket
+        if: env.S3_EXISTS == 'true'
         run: |
           echo "Emptying S3 bucket: ${{ env.S3_BUCKET }}"
           aws s3 rm s3://${{ env.S3_BUCKET }} --recursive || true
           echo "S3 bucket emptied successfully"
         continue-on-error: true
 
-      # Step 5: Initialize Terraform (Backend Resources)
-      - name: Initialize Terraform (Backend Resources)
-        run: terraform init
-        working-directory: terraform/terraform_backend
+      # Step 6: Destroy S3 bucket directly via AWS CLI
+      - name: Destroy S3 Bucket via AWS CLI
+        if: env.S3_EXISTS == 'true'
+        run: |
+          echo "Destroying S3 bucket: ${{ env.S3_BUCKET }}"
+          aws s3api delete-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
+          echo "S3 bucket destruction attempted"
+        continue-on-error: true
 
-      # Step 6: Plan destruction (for review)
-      - name: Plan Backend Destroy
-        run: terraform plan -destroy -var="create_backend=true"
-        working-directory: terraform/terraform_backend
+      # Step 7: Destroy DynamoDB table directly via AWS CLI
+      - name: Destroy DynamoDB Table via AWS CLI
+        if: env.DYNAMODB_EXISTS == 'true'
+        run: |
+          echo "Destroying DynamoDB table: ${{ env.DYNAMODB_TABLE }}"
+          aws dynamodb delete-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
+          echo "DynamoDB table destruction attempted"
+        continue-on-error: true
 
-      # Step 7: Destroy Backend Resources
-      - name: Destroy Backend Resources
-        run: terraform destroy --auto-approve -var="create_backend=true"
+      # Step 8: Wait for resources to be fully deleted
+      - name: Wait for Resource Deletion
+        run: |
+          echo "Waiting for resources to be fully deleted..."
+          sleep 30
+          
+          # Wait for S3 bucket deletion
+          if [ "$S3_EXISTS" = "true" ]; then
+            echo "Waiting for S3 bucket deletion..."
+            for i in {1..10}; do
+              if ! aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+                echo "✅ S3 bucket successfully deleted"
+                break
+              fi
+              echo "Waiting... (attempt $i/10)"
+              sleep 10
+            done
+          fi
+          
+          # Wait for DynamoDB table deletion
+          if [ "$DYNAMODB_EXISTS" = "true" ]; then
+            echo "Waiting for DynamoDB table deletion..."
+            for i in {1..10}; do
+              if ! aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+                echo "✅ DynamoDB table successfully deleted"
+                break
+              fi
+              echo "Waiting... (attempt $i/10)"
+              sleep 10
+            done
+          fi
+
+      # Step 9: Try Terraform destroy as backup (in case some resources are still managed)
+      - name: Terraform Destroy (Backup Method)
+        run: |
+          echo "Attempting Terraform destroy as backup..."
+          terraform init || true
+          terraform destroy --auto-approve -var="create_backend=true" || true
         working-directory: terraform/terraform_backend
+        continue-on-error: true
 
   ###########################################################################
   # Job 3: Verify Cleanup
@@ -130,28 +199,41 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 2: Verify Resources Destroyed
-      - name: Verify Resources Destroyed
+      # Step 2: Comprehensive Resource Verification
+      - name: Verify All Resources Destroyed
         run: |
-          echo "🔍 Verifying that resources have been destroyed..."
+          echo "🔍 Performing comprehensive cleanup verification..."
+          CLEANUP_STATUS="COMPLETE"
           
           # Check if S3 bucket still exists
+          echo "Checking S3 bucket: ${{ env.S3_BUCKET }}"
           if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
             echo "⚠️  S3 bucket '${{ env.S3_BUCKET }}' still exists"
             CLEANUP_STATUS="PARTIAL"
+            
+            # Try to delete it one more time
+            echo "Attempting final S3 bucket deletion..."
+            aws s3 rm s3://${{ env.S3_BUCKET }} --recursive || true
+            aws s3api delete-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
           else
-            echo "✅ S3 bucket '${{ env.S3_BUCKET }}' destroyed successfully"
+            echo "✅ S3 bucket '${{ env.S3_BUCKET }}' successfully destroyed"
           fi
           
           # Check if DynamoDB table still exists
+          echo "Checking DynamoDB table: ${{ env.DYNAMODB_TABLE }}"
           if aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
             echo "⚠️  DynamoDB table '${{ env.DYNAMODB_TABLE }}' still exists"
             CLEANUP_STATUS="PARTIAL"
+            
+            # Try to delete it one more time
+            echo "Attempting final DynamoDB table deletion..."
+            aws dynamodb delete-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
           else
-            echo "✅ DynamoDB table '${{ env.DYNAMODB_TABLE }}' destroyed successfully"
+            echo "✅ DynamoDB table '${{ env.DYNAMODB_TABLE }}' successfully destroyed"
           fi
           
           # Check for any remaining EC2 instances with our tags
+          echo "Checking for remaining EC2 instances..."
           INSTANCES=$(aws ec2 describe-instances \
             --region "${{ env.AWS_REGION }}" \
             --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,pending,stopping,stopped" \
@@ -165,15 +247,48 @@ jobs:
             echo "✅ No remaining EC2 instances found"
           fi
           
-          # Final status
-          if [ "$CLEANUP_STATUS" = "PARTIAL" ]; then
-            echo "⚠️  Cleanup completed with some resources remaining"
-            echo "Please check AWS console for any remaining resources"
+          # Check for remaining security groups
+          echo "Checking for remaining security groups..."
+          SECURITY_GROUPS=$(aws ec2 describe-security-groups \
+            --region "${{ env.AWS_REGION }}" \
+            --filters "Name=tag:Project,Values=online-shop" \
+            --query 'SecurityGroups[*].GroupId' \
+            --output text)
+          
+          if [ -n "$SECURITY_GROUPS" ] && [ "$SECURITY_GROUPS" != "None" ]; then
+            echo "⚠️  Found remaining security groups: $SECURITY_GROUPS"
+            CLEANUP_STATUS="PARTIAL"
           else
-            echo "🎉 All resources destroyed successfully!"
+            echo "✅ No remaining security groups found"
           fi
           
-          echo "Cleanup verification completed"
+          # Check for remaining key pairs
+          echo "Checking for remaining key pairs..."
+          KEY_PAIRS=$(aws ec2 describe-key-pairs \
+            --region "${{ env.AWS_REGION }}" \
+            --filters "Name=key-name,Values=github-action-key" \
+            --query 'KeyPairs[*].KeyName' \
+            --output text)
+          
+          if [ -n "$KEY_PAIRS" ] && [ "$KEY_PAIRS" != "None" ]; then
+            echo "⚠️  Found remaining key pairs: $KEY_PAIRS"
+            CLEANUP_STATUS="PARTIAL"
+          else
+            echo "✅ No remaining key pairs found"
+          fi
+          
+          # Final status report
+          echo "CLEANUP_STATUS=$CLEANUP_STATUS" >> $GITHUB_ENV
+          if [ "$CLEANUP_STATUS" = "COMPLETE" ]; then
+            echo "🎉 All resources destroyed successfully!"
+            echo "💰 Your AWS bill should now be significantly reduced"
+          else
+            echo "⚠️  Cleanup completed with some resources remaining"
+            echo "Please check AWS console for any remaining resources"
+            echo "You may need to manually delete some resources"
+          fi
+          
+          echo "Cleanup verification completed with status: $CLEANUP_STATUS"
 
   ###########################################################################
   # Job 4: Send Notification Email
