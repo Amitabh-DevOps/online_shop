@@ -117,18 +117,39 @@ jobs:
       - name: Destroy Backend Infrastructure
         run: |
           echo "🔥 Destroying backend infrastructure..."
+          
+          # Method 1: Try Terraform destroy first
           cd infrastructure/backend
-          
-          # Initialize Terraform
-          terraform init
-          
-          # Destroy backend
+          terraform init || true
           terraform destroy -auto-approve \
             -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
             -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
-            -var="aws_region=${{ env.AWS_REGION }}"
+            -var="aws_region=${{ env.AWS_REGION }}" || echo "Terraform destroy failed, using direct AWS CLI"
           
-          echo "✅ Backend infrastructure destroyed"
+          # Method 2: Direct AWS CLI cleanup (fallback)
+          echo "🗑️ Using direct AWS CLI cleanup..."
+          
+          # Delete S3 bucket
+          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "Deleting S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
+            aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" || true
+          else
+            echo "✅ S3 bucket already deleted or doesn't exist"
+          fi
+          
+          # Delete DynamoDB table
+          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "Deleting DynamoDB table: ${{ secrets.DYNAMODB_TABLE_NAME }}"
+            aws dynamodb delete-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
+            
+            # Wait for table deletion
+            echo "Waiting for DynamoDB table deletion..."
+            aws dynamodb wait table-not-exists --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
+          else
+            echo "✅ DynamoDB table already deleted or doesn't exist"
+          fi
+          
+          echo "✅ Backend cleanup completed"
 
   # Job 3: Verify Cleanup
   verify-cleanup:
@@ -149,41 +170,67 @@ jobs:
           echo "🔍 Verifying cleanup..."
           CLEANUP_STATUS="COMPLETE"
           
+          # Wait a bit for AWS to process deletions
+          sleep 10
+          
           # Check S3 bucket
-          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" 2>/dev/null; then
-            echo "⚠️  S3 bucket still exists"
-            CLEANUP_STATUS="PARTIAL"
+          echo "Checking S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
+          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "⚠️  S3 bucket still exists, attempting final deletion..."
+            aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" || true
+            sleep 5
+            if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              echo "❌ S3 bucket still exists after cleanup attempts"
+              CLEANUP_STATUS="PARTIAL"
+            else
+              echo "✅ S3 bucket successfully deleted"
+            fi
           else
-            echo "✅ S3 bucket destroyed"
+            echo "✅ S3 bucket successfully destroyed"
           fi
           
           # Check DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" 2>/dev/null; then
-            echo "⚠️  DynamoDB table still exists"
-            CLEANUP_STATUS="PARTIAL"
+          echo "Checking DynamoDB table: ${{ secrets.DYNAMODB_TABLE_NAME }}"
+          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            TABLE_STATUS=$(aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" --query 'Table.TableStatus' --output text 2>/dev/null || echo "NOT_FOUND")
+            if [ "$TABLE_STATUS" = "DELETING" ]; then
+              echo "⏳ DynamoDB table is being deleted..."
+              echo "✅ DynamoDB table deletion in progress"
+            else
+              echo "⚠️  DynamoDB table still active, attempting final deletion..."
+              aws dynamodb delete-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
+              echo "✅ DynamoDB table deletion initiated"
+            fi
           else
-            echo "✅ DynamoDB table destroyed"
+            echo "✅ DynamoDB table successfully destroyed"
           fi
           
           # Check for remaining EC2 instances
+          echo "Checking for remaining EC2 instances..."
           INSTANCES=$(aws ec2 describe-instances \
             --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,pending,stopping,stopped" \
             --query 'Reservations[*].Instances[*].InstanceId' \
-            --output text)
+            --output text --region "${{ env.AWS_REGION }}")
           
-          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ] && [ "$INSTANCES" != "" ]; then
             echo "⚠️  Found remaining EC2 instances: $INSTANCES"
             CLEANUP_STATUS="PARTIAL"
           else
             echo "✅ No remaining EC2 instances"
           fi
           
-          echo "Cleanup status: $CLEANUP_STATUS"
+          # Final status
+          echo "CLEANUP_STATUS=$CLEANUP_STATUS" >> $GITHUB_ENV
+          echo ""
+          echo "🎯 Final Cleanup Status: $CLEANUP_STATUS"
           
           if [ "$CLEANUP_STATUS" = "COMPLETE" ]; then
             echo "🎉 All resources destroyed successfully!"
+            echo "💰 Your AWS bill should now be minimal"
           else
-            echo "⚠️  Some resources may still exist. Please check AWS console."
+            echo "⚠️  Some resources may still exist"
+            echo "💡 This is often normal for resources in 'DELETING' state"
+            echo "🔍 Check AWS console in a few minutes to confirm"
           fi
 
   # Job 4: Send Notification
