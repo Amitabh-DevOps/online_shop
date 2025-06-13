@@ -82,36 +82,50 @@ jobs:
 
       - name: Empty S3 Bucket
         run: |
-          echo "🗑️  Emptying S3 bucket..."
+          echo "🗑️  Completely emptying S3 bucket..."
           
-          # Delete all object versions
-          aws s3api list-object-versions \
-            --bucket "${{ secrets.STATE_BUCKET_NAME }}" \
-            --query 'Versions[].{Key: Key, VersionId: VersionId}' \
-            --output json | \
-          jq -r '.[] | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
-          while IFS= read -r line; do
-            if [ -n "$line" ]; then
-              aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" $line || true
+          BUCKET_NAME="${{ secrets.STATE_BUCKET_NAME }}"
+          
+          # Method 1: Delete all object versions using proper JSON parsing
+          echo "Deleting all object versions..."
+          aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json > versions.json || echo "{}" > versions.json
+          
+          # Delete all versions
+          if [ -s versions.json ] && [ "$(cat versions.json)" != "{}" ]; then
+            # Extract versions and delete them
+            cat versions.json | jq -r '.Versions[]? | select(.Key != null) | .Key + " " + .VersionId' | while read key version; do
+              if [ -n "$key" ] && [ -n "$version" ]; then
+                echo "Deleting version: $key ($version)"
+                aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version" || true
+              fi
+            done
+            
+            # Extract delete markers and delete them
+            cat versions.json | jq -r '.DeleteMarkers[]? | select(.Key != null) | .Key + " " + .VersionId' | while read key version; do
+              if [ -n "$key" ] && [ -n "$version" ]; then
+                echo "Deleting delete marker: $key ($version)"
+                aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version" || true
+              fi
+            done
+          fi
+          
+          # Method 2: Force delete using s3 rm (backup method)
+          echo "Force removing any remaining objects..."
+          aws s3 rm s3://$BUCKET_NAME --recursive || true
+          
+          # Method 3: List and delete any remaining objects manually
+          echo "Final cleanup of any remaining objects..."
+          aws s3api list-objects-v2 --bucket "$BUCKET_NAME" --query 'Contents[].Key' --output text | tr '\t' '\n' | while read key; do
+            if [ -n "$key" ] && [ "$key" != "None" ]; then
+              echo "Deleting remaining object: $key"
+              aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" || true
             fi
           done
           
-          # Delete all delete markers
-          aws s3api list-object-versions \
-            --bucket "${{ secrets.STATE_BUCKET_NAME }}" \
-            --query 'DeleteMarkers[].{Key: Key, VersionId: VersionId}' \
-            --output json | \
-          jq -r '.[] | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
-          while IFS= read -r line; do
-            if [ -n "$line" ]; then
-              aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" $line || true
-            fi
-          done
+          # Clean up temp file
+          rm -f versions.json
           
-          # Remove any remaining objects
-          aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive || true
-          
-          echo "✅ S3 bucket emptied"
+          echo "✅ S3 bucket emptying completed"
         continue-on-error: true
 
       - name: Destroy Backend Infrastructure
@@ -176,11 +190,40 @@ jobs:
           # Check S3 bucket
           echo "Checking S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
           if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  S3 bucket still exists, attempting final deletion..."
-            aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" || true
-            sleep 5
+            echo "⚠️  S3 bucket still exists, performing final cleanup..."
+            
+            # Final emptying attempt
+            aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive || true
+            
+            # List any remaining objects for debugging
+            echo "Checking for remaining objects..."
+            REMAINING_OBJECTS=$(aws s3api list-objects-v2 --bucket "${{ secrets.STATE_BUCKET_NAME }}" --query 'Contents[].Key' --output text 2>/dev/null || echo "")
+            if [ -n "$REMAINING_OBJECTS" ] && [ "$REMAINING_OBJECTS" != "None" ]; then
+              echo "Found remaining objects: $REMAINING_OBJECTS"
+              # Delete them one by one
+              echo "$REMAINING_OBJECTS" | tr '\t' '\n' | while read obj; do
+                if [ -n "$obj" ]; then
+                  aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" --key "$obj" || true
+                fi
+              done
+            fi
+            
+            # Try to delete bucket multiple times
+            for i in {1..5}; do
+              echo "Bucket deletion attempt $i/5..."
+              if aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+                echo "✅ S3 bucket successfully deleted on attempt $i"
+                break
+              else
+                echo "Attempt $i failed, waiting 10 seconds..."
+                sleep 10
+              fi
+            done
+            
+            # Final check
             if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-              echo "❌ S3 bucket still exists after cleanup attempts"
+              echo "❌ S3 bucket still exists after all cleanup attempts"
+              echo "🔍 Bucket may have remaining versions or delete markers"
               CLEANUP_STATUS="PARTIAL"
             else
               echo "✅ S3 bucket successfully deleted"
