@@ -1,17 +1,11 @@
-# Local values for AMI selection
-locals {
-  # Try to use Ubuntu 22.04, fallback to 20.04 if not available
-  selected_ami_id = try(data.aws_ami.ubuntu_22.id, data.aws_ami.ubuntu_20.id, data.aws_ami.ubuntu.id)
-}
-
-# Fetch the latest Ubuntu AMI - using a more reliable approach
+# Fetch the latest Ubuntu AMI - using the most reliable approach
 data "aws_ami" "ubuntu" {
   owners      = ["099720109477"] # Canonical
   most_recent = true
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-20.04-lts-amd64-server-*"]
+    values = ["ubuntu/images/hvm-ssd/ubuntu-*"]
   }
 
   filter {
@@ -27,6 +21,11 @@ data "aws_ami" "ubuntu" {
   filter {
     name   = "architecture"
     values = ["x86_64"]
+  }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
   }
 }
 
@@ -124,7 +123,7 @@ resource "aws_security_group" "terraform_sg" {
 
 # Create an EC2 instance with improved configuration
 resource "aws_instance" "github_action_instance" {
-  ami                    = local.selected_ami_id
+  ami                    = local.final_ami_id
   instance_type          = var.aws_instance_type
   key_name              = aws_key_pair.terraform_key.key_name
   vpc_security_group_ids = [aws_security_group.terraform_sg.id]

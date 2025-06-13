@@ -109,6 +109,19 @@ jobs:
       - name: Check AWS CLI Version
         run: aws --version
 
+      # Debug: Check available Ubuntu AMIs
+      - name: Debug - Check Available Ubuntu AMIs
+        run: |
+          echo "🔍 Checking available Ubuntu AMIs in ${{ env.AWS_REGION }}..."
+          aws ec2 describe-images \
+            --region ${{ env.AWS_REGION }} \
+            --owners 099720109477 \
+            --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-*" \
+                      "Name=state,Values=available" \
+                      "Name=architecture,Values=x86_64" \
+            --query 'Images[0:5].[Name,ImageId,CreationDate]' \
+            --output table || echo "Failed to fetch AMI list"
+
       # Initialize Terraform using the remote backend.
       - name: Initialize Resources with Backend
         run: terraform init
@@ -121,12 +134,12 @@ jobs:
 
       # Execute Terraform plan to review changes.
       - name: Terraform Plan
-        run: terraform plan
+        run: terraform plan -var="use_fallback_ami=true"
         working-directory: terraform/terraform_resources
 
       # Apply the Terraform changes.
       - name: Apply Terraform Changes
-        run: terraform apply --auto-approve
+        run: terraform apply --auto-approve -var="use_fallback_ami=true"
         working-directory: terraform/terraform_resources
 
       # Capture the EC2 instance's public IP from Terraform outputs.
