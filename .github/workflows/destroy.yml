@@ -10,8 +10,6 @@ on:
 
 env:
   AWS_REGION: eu-west-1
-  S3_BUCKET: github-actions-buckets-new
-  DYNAMODB_TABLE: github-actions-dbs-new
 
 jobs:
   ###########################################################################
@@ -97,47 +95,47 @@ jobs:
           echo "Checking for existing backend resources..."
           
           # Check S3 bucket
-          if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "S3_EXISTS=true" >> $GITHUB_ENV
-            echo "✅ S3 bucket exists: ${{ env.S3_BUCKET }}"
+          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "s3_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ S3 bucket exists: ${{ secrets.AWS_S3_BUCKET }}"
           else
-            echo "S3_EXISTS=false" >> $GITHUB_ENV
-            echo "❌ S3 bucket not found: ${{ env.S3_BUCKET }}"
+            echo "s3_exists=false" >> $GITHUB_OUTPUT
+            echo "❌ S3 bucket not found: ${{ secrets.AWS_S3_BUCKET }}"
           fi
           
           # Check DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "DYNAMODB_EXISTS=true" >> $GITHUB_ENV
-            echo "✅ DynamoDB table exists: ${{ env.DYNAMODB_TABLE }}"
+          if aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "dynamodb_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ DynamoDB table exists: ${{ secrets.AWS_DYNAMODB_TABLE }}"
           else
-            echo "DYNAMODB_EXISTS=false" >> $GITHUB_ENV
-            echo "❌ DynamoDB table not found: ${{ env.DYNAMODB_TABLE }}"
+            echo "dynamodb_exists=false" >> $GITHUB_OUTPUT
+            echo "❌ DynamoDB table not found: ${{ secrets.AWS_DYNAMODB_TABLE }}"
           fi
 
       # Step 5: Empty S3 bucket if it exists
       - name: Empty S3 Bucket
-        if: env.S3_EXISTS == 'true'
+        if: steps.check-resources.outputs.s3_exists == 'true'
         run: |
-          echo "Emptying S3 bucket: ${{ env.S3_BUCKET }}"
-          aws s3 rm s3://${{ env.S3_BUCKET }} --recursive || true
+          echo "Emptying S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
+          aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
           echo "S3 bucket emptied successfully"
         continue-on-error: true
 
       # Step 6: Destroy S3 bucket directly via AWS CLI
       - name: Destroy S3 Bucket via AWS CLI
-        if: env.S3_EXISTS == 'true'
+        if: steps.check-resources.outputs.s3_exists == 'true'
         run: |
-          echo "Destroying S3 bucket: ${{ env.S3_BUCKET }}"
-          aws s3api delete-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
+          echo "Destroying S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
+          aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
           echo "S3 bucket destruction attempted"
         continue-on-error: true
 
       # Step 7: Destroy DynamoDB table directly via AWS CLI
       - name: Destroy DynamoDB Table via AWS CLI
-        if: env.DYNAMODB_EXISTS == 'true'
+        if: steps.check-resources.outputs.dynamodb_exists == 'true'
         run: |
-          echo "Destroying DynamoDB table: ${{ env.DYNAMODB_TABLE }}"
-          aws dynamodb delete-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
+          echo "Destroying DynamoDB table: ${{ secrets.AWS_DYNAMODB_TABLE }}"
+          aws dynamodb delete-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
           echo "DynamoDB table destruction attempted"
         continue-on-error: true
 
@@ -148,10 +146,10 @@ jobs:
           sleep 30
           
           # Wait for S3 bucket deletion
-          if [ "$S3_EXISTS" = "true" ]; then
+          if [ "${{ steps.check-resources.outputs.s3_exists }}" = "true" ]; then
             echo "Waiting for S3 bucket deletion..."
             for i in {1..10}; do
-              if ! aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              if ! aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
                 echo "✅ S3 bucket successfully deleted"
                 break
               fi
@@ -161,10 +159,10 @@ jobs:
           fi
           
           # Wait for DynamoDB table deletion
-          if [ "$DYNAMODB_EXISTS" = "true" ]; then
+          if [ "${{ steps.check-resources.outputs.dynamodb_exists }}" = "true" ]; then
             echo "Waiting for DynamoDB table deletion..."
             for i in {1..10}; do
-              if ! aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              if ! aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
                 echo "✅ DynamoDB table successfully deleted"
                 break
               fi
@@ -206,30 +204,30 @@ jobs:
           CLEANUP_STATUS="COMPLETE"
           
           # Check if S3 bucket still exists
-          echo "Checking S3 bucket: ${{ env.S3_BUCKET }}"
-          if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  S3 bucket '${{ env.S3_BUCKET }}' still exists"
+          echo "Checking S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
+          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "⚠️  S3 bucket '${{ secrets.AWS_S3_BUCKET }}' still exists"
             CLEANUP_STATUS="PARTIAL"
             
             # Try to delete it one more time
             echo "Attempting final S3 bucket deletion..."
-            aws s3 rm s3://${{ env.S3_BUCKET }} --recursive || true
-            aws s3api delete-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
+            aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
+            aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
           else
-            echo "✅ S3 bucket '${{ env.S3_BUCKET }}' successfully destroyed"
+            echo "✅ S3 bucket '${{ secrets.AWS_S3_BUCKET }}' successfully destroyed"
           fi
           
           # Check if DynamoDB table still exists
-          echo "Checking DynamoDB table: ${{ env.DYNAMODB_TABLE }}"
-          if aws dynamodb describe-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  DynamoDB table '${{ env.DYNAMODB_TABLE }}' still exists"
+          echo "Checking DynamoDB table: ${{ secrets.AWS_DYNAMODB_TABLE }}"
+          if aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+            echo "⚠️  DynamoDB table '${{ secrets.AWS_DYNAMODB_TABLE }}' still exists"
             CLEANUP_STATUS="PARTIAL"
             
             # Try to delete it one more time
             echo "Attempting final DynamoDB table deletion..."
-            aws dynamodb delete-table --table-name "${{ env.DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
+            aws dynamodb delete-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
           else
-            echo "✅ DynamoDB table '${{ env.DYNAMODB_TABLE }}' successfully destroyed"
+            echo "✅ DynamoDB table '${{ secrets.AWS_DYNAMODB_TABLE }}' successfully destroyed"
           fi
           
           # Check for any remaining EC2 instances with our tags

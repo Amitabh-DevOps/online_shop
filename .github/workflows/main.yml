@@ -8,8 +8,6 @@ on:
 
 env:
   AWS_REGION: eu-west-1
-  S3_BUCKET: github-actions-buckets-new
-  DYNAMODB_TABLE: github-actions-dbs-new
 
 jobs:
   ###########################################################################
@@ -49,7 +47,7 @@ jobs:
       - name: Check if S3 Bucket Exists
         id: check_bucket
         run: |
-          if aws s3api head-bucket --bucket "${{ env.S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
             echo "Bucket exists"
             echo "CREATE_BACKEND=false" >> $GITHUB_ENV
           else
