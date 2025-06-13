@@ -88,80 +88,28 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 4: Check if resources exist before trying to destroy
-      - name: Check Existing Backend Resources
-        id: check-resources
-        run: |
-          echo "Checking for existing backend resources..."
-          
-          # Check S3 bucket
-          if aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "s3_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ S3 bucket exists: ${{ secrets.AWS_S3_BUCKET }}"
-          else
-            echo "s3_exists=false" >> $GITHUB_OUTPUT
-            echo "❌ S3 bucket not found: ${{ secrets.AWS_S3_BUCKET }}"
-          fi
-          
-          # Check DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "dynamodb_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ DynamoDB table exists: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          else
-            echo "dynamodb_exists=false" >> $GITHUB_OUTPUT
-            echo "❌ DynamoDB table not found: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          fi
+      # Step 4: Initialize Terraform (Backend Resources)
+      - name: Initialize Terraform (Backend Resources)
+        run: terraform init
+        working-directory: terraform/terraform_backend
 
-      # Step 5: Destroy S3 bucket directly via AWS CLI
-      - name: Destroy S3 Bucket via AWS CLI
-        if: steps.check-resources.outputs.s3_exists == 'true'
+      # Step 5: Plan Backend Destroy
+      - name: Plan Backend Destroy
+        run: terraform plan -destroy -var="create_backend=true"
+        working-directory: terraform/terraform_backend
+
+      # Step 6: Empty S3 Bucket Before Terraform Destroy
+      - name: Empty S3 Bucket Before Destroy
         run: |
-          echo "Destroying S3 bucket: ${{ secrets.AWS_S3_BUCKET }}"
-          echo "⚠️  Note: Bucket should be manually emptied before running this workflow"
-          aws s3api delete-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" || true
-          echo "S3 bucket destruction attempted"
+          echo "Emptying S3 bucket before Terraform destroy: ${{ secrets.AWS_S3_BUCKET }}"
+          aws s3 rm s3://${{ secrets.AWS_S3_BUCKET }} --recursive || true
+          echo "S3 bucket emptied successfully"
         continue-on-error: true
 
-      # Step 6: Destroy DynamoDB table directly via AWS CLI
-      - name: Destroy DynamoDB Table via AWS CLI
-        if: steps.check-resources.outputs.dynamodb_exists == 'true'
-        run: |
-          echo "Destroying DynamoDB table: ${{ secrets.AWS_DYNAMODB_TABLE }}"
-          aws dynamodb delete-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" || true
-          echo "DynamoDB table destruction attempted"
-        continue-on-error: true
-
-      # Step 7: Wait for resources to be fully deleted
-      - name: Wait for Resource Deletion
-        run: |
-          echo "Waiting for resources to be fully deleted..."
-          sleep 30
-          
-          # Wait for S3 bucket deletion
-          if [ "${{ steps.check-resources.outputs.s3_exists }}" = "true" ]; then
-            echo "Waiting for S3 bucket deletion..."
-            for i in {1..10}; do
-              if ! aws s3api head-bucket --bucket "${{ secrets.AWS_S3_BUCKET }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-                echo "✅ S3 bucket successfully deleted"
-                break
-              fi
-              echo "Waiting... (attempt $i/10)"
-              sleep 10
-            done
-          fi
-          
-          # Wait for DynamoDB table deletion
-          if [ "${{ steps.check-resources.outputs.dynamodb_exists }}" = "true" ]; then
-            echo "Waiting for DynamoDB table deletion..."
-            for i in {1..10}; do
-              if ! aws dynamodb describe-table --table-name "${{ secrets.AWS_DYNAMODB_TABLE }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-                echo "✅ DynamoDB table successfully deleted"
-                break
-              fi
-              echo "Waiting... (attempt $i/10)"
-              sleep 10
-            done
-          fi
+      # Step 7: Destroy Backend Resources with Terraform
+      - name: Destroy Backend Resources
+        run: terraform destroy --auto-approve -var="create_backend=true"
+        working-directory: terraform/terraform_backend
 
   ###########################################################################
   # Job 3: Verify Cleanup
