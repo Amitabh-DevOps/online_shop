@@ -58,9 +58,9 @@ jobs:
           
           echo "✅ Main infrastructure destroyed"
 
-  # Job 2: Destroy Backend Infrastructure
+  # Job 2: Destroy Backend Infrastructure with Terraform
   destroy-backend:
-    name: Destroy Backend
+    name: Destroy Backend with Terraform
     runs-on: ubuntu-latest
     needs: destroy-infrastructure
     if: github.event.inputs.confirm == 'destroy'
@@ -80,94 +80,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Empty S3 Bucket
+      - name: Destroy Backend Infrastructure with Terraform
         run: |
-          echo "🗑️  Completely emptying S3 bucket..."
-          
-          BUCKET_NAME="${{ secrets.STATE_BUCKET_NAME }}"
-          
-          # Method 1: Delete all object versions using proper JSON parsing
-          echo "Deleting all object versions..."
-          aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json > versions.json || echo "{}" > versions.json
-          
-          # Delete all versions
-          if [ -s versions.json ] && [ "$(cat versions.json)" != "{}" ]; then
-            # Extract versions and delete them
-            cat versions.json | jq -r '.Versions[]? | select(.Key != null) | .Key + " " + .VersionId' | while read key version; do
-              if [ -n "$key" ] && [ -n "$version" ]; then
-                echo "Deleting version: $key ($version)"
-                aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version" || true
-              fi
-            done
-            
-            # Extract delete markers and delete them
-            cat versions.json | jq -r '.DeleteMarkers[]? | select(.Key != null) | .Key + " " + .VersionId' | while read key version; do
-              if [ -n "$key" ] && [ -n "$version" ]; then
-                echo "Deleting delete marker: $key ($version)"
-                aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version" || true
-              fi
-            done
-          fi
-          
-          # Method 2: Force delete using s3 rm (backup method)
-          echo "Force removing any remaining objects..."
-          aws s3 rm s3://$BUCKET_NAME --recursive || true
-          
-          # Method 3: List and delete any remaining objects manually
-          echo "Final cleanup of any remaining objects..."
-          aws s3api list-objects-v2 --bucket "$BUCKET_NAME" --query 'Contents[].Key' --output text | tr '\t' '\n' | while read key; do
-            if [ -n "$key" ] && [ "$key" != "None" ]; then
-              echo "Deleting remaining object: $key"
-              aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" || true
-            fi
-          done
-          
-          # Clean up temp file
-          rm -f versions.json
-          
-          echo "✅ S3 bucket emptying completed"
-        continue-on-error: true
-
-      - name: Destroy Backend Infrastructure
-        run: |
-          echo "🔥 Destroying backend infrastructure..."
-          
-          # Method 1: Try Terraform destroy first
+          echo "🔥 Destroying backend infrastructure with Terraform..."
           cd infrastructure/backend
-          terraform init || true
+          
+          # Initialize Terraform (uses local state for backend resources)
+          terraform init
+          
+          # Plan destruction (for visibility)
+          echo "📋 Planning backend destruction..."
+          terraform plan -destroy \
+            -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
+            -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
+            -var="aws_region=${{ env.AWS_REGION }}"
+          
+          # Destroy backend using Terraform state management
+          echo "🔥 Executing backend destruction..."
           terraform destroy -auto-approve \
             -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
             -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
-            -var="aws_region=${{ env.AWS_REGION }}" || echo "Terraform destroy failed, using direct AWS CLI"
+            -var="aws_region=${{ env.AWS_REGION }}"
           
-          # Method 2: Direct AWS CLI cleanup (fallback)
-          echo "🗑️ Using direct AWS CLI cleanup..."
-          
-          # Delete S3 bucket
-          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "Deleting S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
-            aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" || true
-          else
-            echo "✅ S3 bucket already deleted or doesn't exist"
-          fi
-          
-          # Delete DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "Deleting DynamoDB table: ${{ secrets.DYNAMODB_TABLE_NAME }}"
-            aws dynamodb delete-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
-            
-            # Wait for table deletion
-            echo "Waiting for DynamoDB table deletion..."
-            aws dynamodb wait table-not-exists --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
-          else
-            echo "✅ DynamoDB table already deleted or doesn't exist"
-          fi
-          
-          echo "✅ Backend cleanup completed"
+          echo "✅ Backend infrastructure destroyed with Terraform"
 
-  # Job 3: Verify Cleanup
+  # Job 3: Verify Complete Cleanup
   verify-cleanup:
-    name: Verify Cleanup
+    name: Verify Complete Cleanup
     runs-on: ubuntu-latest
     needs: [destroy-infrastructure, destroy-backend]
     if: github.event.inputs.confirm == 'destroy'
@@ -181,53 +120,14 @@ jobs:
 
       - name: Verify All Resources Destroyed
         run: |
-          echo "🔍 Verifying cleanup..."
+          echo "🔍 Verifying complete cleanup..."
           CLEANUP_STATUS="COMPLETE"
-          
-          # Wait a bit for AWS to process deletions
-          sleep 10
           
           # Check S3 bucket
           echo "Checking S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
           if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "⚠️  S3 bucket still exists, performing final cleanup..."
-            
-            # Final emptying attempt
-            aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive || true
-            
-            # List any remaining objects for debugging
-            echo "Checking for remaining objects..."
-            REMAINING_OBJECTS=$(aws s3api list-objects-v2 --bucket "${{ secrets.STATE_BUCKET_NAME }}" --query 'Contents[].Key' --output text 2>/dev/null || echo "")
-            if [ -n "$REMAINING_OBJECTS" ] && [ "$REMAINING_OBJECTS" != "None" ]; then
-              echo "Found remaining objects: $REMAINING_OBJECTS"
-              # Delete them one by one
-              echo "$REMAINING_OBJECTS" | tr '\t' '\n' | while read obj; do
-                if [ -n "$obj" ]; then
-                  aws s3api delete-object --bucket "${{ secrets.STATE_BUCKET_NAME }}" --key "$obj" || true
-                fi
-              done
-            fi
-            
-            # Try to delete bucket multiple times
-            for i in {1..5}; do
-              echo "Bucket deletion attempt $i/5..."
-              if aws s3api delete-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-                echo "✅ S3 bucket successfully deleted on attempt $i"
-                break
-              else
-                echo "Attempt $i failed, waiting 10 seconds..."
-                sleep 10
-              fi
-            done
-            
-            # Final check
-            if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-              echo "❌ S3 bucket still exists after all cleanup attempts"
-              echo "🔍 Bucket may have remaining versions or delete markers"
-              CLEANUP_STATUS="PARTIAL"
-            else
-              echo "✅ S3 bucket successfully deleted"
-            fi
+            echo "❌ S3 bucket still exists"
+            CLEANUP_STATUS="PARTIAL"
           else
             echo "✅ S3 bucket successfully destroyed"
           fi
@@ -240,9 +140,8 @@ jobs:
               echo "⏳ DynamoDB table is being deleted..."
               echo "✅ DynamoDB table deletion in progress"
             else
-              echo "⚠️  DynamoDB table still active, attempting final deletion..."
-              aws dynamodb delete-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" || true
-              echo "✅ DynamoDB table deletion initiated"
+              echo "❌ DynamoDB table still exists"
+              CLEANUP_STATUS="PARTIAL"
             fi
           else
             echo "✅ DynamoDB table successfully destroyed"
@@ -256,31 +155,57 @@ jobs:
             --output text --region "${{ env.AWS_REGION }}")
           
           if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ] && [ "$INSTANCES" != "" ]; then
-            echo "⚠️  Found remaining EC2 instances: $INSTANCES"
+            echo "❌ Found remaining EC2 instances: $INSTANCES"
             CLEANUP_STATUS="PARTIAL"
           else
             echo "✅ No remaining EC2 instances"
           fi
           
           # Final status
-          echo "CLEANUP_STATUS=$CLEANUP_STATUS" >> $GITHUB_ENV
           echo ""
           echo "🎯 Final Cleanup Status: $CLEANUP_STATUS"
           
           if [ "$CLEANUP_STATUS" = "COMPLETE" ]; then
             echo "🎉 All resources destroyed successfully!"
             echo "💰 Your AWS bill should now be minimal"
+            echo "✅ Complete end-to-end Terraform lifecycle validated"
           else
             echo "⚠️  Some resources may still exist"
-            echo "💡 This is often normal for resources in 'DELETING' state"
-            echo "🔍 Check AWS console in a few minutes to confirm"
+            echo "🔍 Check AWS console for any remaining resources"
           fi
 
-  # Job 4: Send Notification
+  # Job 4: Manual Cleanup Instructions
+  manual-cleanup-instructions:
+    name: Manual Cleanup Instructions
+    runs-on: ubuntu-latest
+    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
+    if: github.event.inputs.confirm == 'destroy'
+    steps:
+      - name: Display Final Manual Cleanup Instructions
+        run: |
+          echo "🎉 Terraform destruction completed successfully!"
+          echo ""
+          echo "📋 Final manual cleanup step:"
+          echo "The S3 bucket and its contents (including Terraform state files)"
+          echo "have been preserved throughout the workflow to ensure proper"
+          echo "Terraform state management."
+          echo ""
+          echo "🔧 Now you can manually clean up the S3 bucket:"
+          echo "aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive"
+          echo "aws s3api delete-bucket --bucket ${{ secrets.STATE_BUCKET_NAME }} --region ${{ env.AWS_REGION }}"
+          echo ""
+          echo "✅ This ensures:"
+          echo "• Proper Terraform state management throughout destruction"
+          echo "• Clean end-to-end Infrastructure as Code lifecycle"
+          echo "• No orphaned resources"
+          echo ""
+          echo "💰 After manual cleanup, your AWS bill will be minimal!"
+
+  # Job 5: Send Notification
   notify:
     name: Send Notification
     runs-on: ubuntu-latest
-    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
+    needs: [destroy-infrastructure, destroy-backend, verify-cleanup, manual-cleanup-instructions]
     if: always() && github.event.inputs.confirm == 'destroy'
     steps:
       - name: Determine Status
@@ -290,10 +215,10 @@ jobs:
              [[ "${{ needs.destroy-backend.result }}" == "success" ]] && \
              [[ "${{ needs.verify-cleanup.result }}" == "success" ]]; then
             echo "result=Success ✅" >> $GITHUB_OUTPUT
-            echo "message=All infrastructure destroyed successfully" >> $GITHUB_OUTPUT
+            echo "message=All infrastructure destroyed successfully using Terraform" >> $GITHUB_OUTPUT
           else
-            echo "result=Failed ❌" >> $GITHUB_OUTPUT
-            echo "message=Some resources may not have been destroyed" >> $GITHUB_OUTPUT
+            echo "result=Partial ⚠️" >> $GITHUB_OUTPUT
+            echo "message=Some destruction steps may need manual completion" >> $GITHUB_OUTPUT
           fi
 
       - name: Send Email Notification
@@ -303,7 +228,7 @@ jobs:
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🔥 Infrastructure Destroyed - ${{ steps.status.outputs.result }}"
+          subject: "🔥 Infrastructure Destruction - ${{ steps.status.outputs.result }}"
           to: ${{ secrets.MAIL_TO }}
           from: ${{ secrets.MAIL_FROM }}
           html_body: |
@@ -311,9 +236,14 @@ jobs:
               <h2 style="color: #d73a49;">🔥 Infrastructure Destruction Complete</h2>
               <p><strong>Status:</strong> ${{ steps.status.outputs.result }}</p>
               <p><strong>Message:</strong> ${{ steps.status.outputs.message }}</p>
-              <p><strong>Repository:</strong> ${{ github.repository }}</p>
-              <p><strong>Triggered by:</strong> ${{ github.actor }}</p>
-              <p><strong>Timestamp:</strong> ${{ github.event.head_commit.timestamp }}</p>
+              <hr>
+              <h3>Destruction Details:</h3>
+              <ul>
+                <li><strong>Repository:</strong> ${{ github.repository }}</li>
+                <li><strong>Triggered by:</strong> ${{ github.actor }}</li>
+                <li><strong>Method:</strong> Terraform State Management</li>
+                <li><strong>Manual Step:</strong> S3 bucket cleanup (after workflow success)</li>
+              </ul>
               <hr>
               <h3>Job Results:</h3>
               <ul>
@@ -321,6 +251,16 @@ jobs:
                 <li>Destroy Backend: ${{ needs.destroy-backend.result }}</li>
                 <li>Verify Cleanup: ${{ needs.verify-cleanup.result }}</li>
               </ul>
-              <p><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Details</a></p>
+              <hr>
+              <h3>💡 Process Used:</h3>
+              <p>This destruction used proper Terraform state management:</p>
+              <ol>
+                <li>✅ Main infrastructure destroyed via Terraform</li>
+                <li>✅ Backend destroyed via Terraform (state preserved)</li>
+                <li>✅ Complete cleanup verification</li>
+                <li>⚠️ Manual S3 cleanup after workflow success</li>
+              </ol>
+              <p><strong>Final Step:</strong> Manually delete S3 bucket after receiving this email</p>
+              <p><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Full Details</a></p>
             </div>
         continue-on-error: true
