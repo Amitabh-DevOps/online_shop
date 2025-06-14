@@ -86,6 +86,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Download Backend State from S3 (if exists)
+        run: |
+          echo "🔍 Checking for existing backend state..."
+          cd infrastructure/backend
+          
+          # Try to download backend state from a known location
+          # We'll store backend state in S3 with a different key
+          aws s3 cp s3://${{ secrets.STATE_BUCKET_NAME }}/backend-terraform.tfstate terraform.tfstate || echo "No backend state found in S3"
+          
+          if [ -f "terraform.tfstate" ]; then
+            echo "✅ Downloaded backend state from S3"
+          else
+            echo "⚠️  No backend state found, will try to import resources"
+          fi
+
       - name: Destroy Backend Infrastructure with Terraform
         run: |
           echo "🔥 Destroying backend infrastructure with Terraform..."
@@ -94,29 +109,25 @@ jobs:
           # Initialize Terraform
           terraform init
           
-          # Import existing resources into Terraform state
-          echo "📥 Importing existing backend resources..."
-          
-          # Import S3 bucket and related resources
-          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "Importing S3 bucket..."
-            terraform import aws_s3_bucket.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 bucket import failed"
-            terraform import aws_s3_bucket_versioning.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 versioning import failed"
-            terraform import aws_s3_bucket_server_side_encryption_configuration.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 encryption import failed"
-            terraform import aws_s3_bucket_public_access_block.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 public access block import failed"
-          else
-            echo "S3 bucket not found, skipping import"
+          # If no state file exists, try to import resources
+          if [ ! -f "terraform.tfstate" ] || [ ! -s "terraform.tfstate" ]; then
+            echo "📥 Importing existing backend resources..."
+            
+            # Import S3 bucket
+            if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              terraform import aws_s3_bucket.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 import failed"
+              terraform import aws_s3_bucket_versioning.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 versioning import failed"
+              terraform import aws_s3_bucket_server_side_encryption_configuration.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 encryption import failed"
+              terraform import aws_s3_bucket_public_access_block.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 public access block import failed"
+            fi
+            
+            # Import DynamoDB table
+            if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              terraform import aws_dynamodb_table.terraform_locks "${{ secrets.DYNAMODB_TABLE_NAME }}" || echo "DynamoDB import failed"
+            fi
           fi
           
-          # Import DynamoDB table
-          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "Importing DynamoDB table..."
-            terraform import aws_dynamodb_table.terraform_locks "${{ secrets.DYNAMODB_TABLE_NAME }}" || echo "DynamoDB table import failed"
-          else
-            echo "DynamoDB table not found, skipping import"
-          fi
-          
-          # Plan destruction (should now show resources to destroy)
+          # Plan destruction (for visibility)
           echo "📋 Planning backend destruction..."
           terraform plan -destroy \
             -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
@@ -202,11 +213,38 @@ jobs:
             echo "🔍 Check AWS console for any remaining resources"
           fi
 
-  # Job 4: Send Notification
+  # Job 4: Manual Cleanup Instructions
+  manual-cleanup-instructions:
+    name: Manual Cleanup Instructions
+    runs-on: ubuntu-latest
+    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
+    if: github.event.inputs.confirm == 'destroy'
+    steps:
+      - name: Display Final Manual Cleanup Instructions
+        run: |
+          echo "🎉 Terraform destruction completed successfully!"
+          echo ""
+          echo "📋 Final manual cleanup step:"
+          echo "The S3 bucket and its contents (including Terraform state files)"
+          echo "have been preserved throughout the workflow to ensure proper"
+          echo "Terraform state management."
+          echo ""
+          echo "🔧 Now you can manually clean up the S3 bucket:"
+          echo "aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive"
+          echo "aws s3api delete-bucket --bucket ${{ secrets.STATE_BUCKET_NAME }} --region ${{ env.AWS_REGION }}"
+          echo ""
+          echo "✅ This ensures:"
+          echo "• Proper Terraform state management throughout destruction"
+          echo "• Clean end-to-end Infrastructure as Code lifecycle"
+          echo "• No orphaned resources"
+          echo ""
+          echo "💰 After manual cleanup, your AWS bill will be minimal!"
+
+  # Job 5: Send Notification
   notify:
     name: Send Notification
     runs-on: ubuntu-latest
-    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
+    needs: [destroy-infrastructure, destroy-backend, verify-cleanup, manual-cleanup-instructions]
     if: always() && github.event.inputs.confirm == 'destroy'
     steps:
       - name: Determine Status
@@ -242,8 +280,8 @@ jobs:
               <ul>
                 <li><strong>Repository:</strong> ${{ github.repository }}</li>
                 <li><strong>Triggered by:</strong> ${{ github.actor }}</li>
-                <li><strong>Method:</strong> 100% Terraform Automation</li>
-                <li><strong>State Management:</strong> Complete S3 Backend Integration</li>
+                <li><strong>Method:</strong> Terraform State Management</li>
+                <li><strong>Manual Step:</strong> S3 bucket cleanup (after workflow success)</li>
               </ul>
               <hr>
               <h3>Job Results:</h3>
@@ -253,16 +291,15 @@ jobs:
                 <li>Verify Cleanup: ${{ needs.verify-cleanup.result }}</li>
               </ul>
               <hr>
-              <h3>🎉 Fully Automated Process:</h3>
-              <p>This destruction used complete Terraform automation:</p>
+              <h3>💡 Process Used:</h3>
+              <p>This destruction used proper Terraform state management:</p>
               <ol>
-                <li>✅ Main infrastructure destroyed via Terraform S3 backend</li>
-                <li>✅ Backend state downloaded from S3</li>
-                <li>✅ Backend destroyed via Terraform state management</li>
-                <li>✅ Complete cleanup verification - all resources removed</li>
-                <li>✅ Zero manual intervention required</li>
+                <li>✅ Main infrastructure destroyed via Terraform</li>
+                <li>✅ Backend destroyed via Terraform (state preserved)</li>
+                <li>✅ Complete cleanup verification</li>
+                <li>⚠️ Manual S3 cleanup after workflow success</li>
               </ol>
-              <p><strong>Result:</strong> Complete end-to-end Infrastructure as Code lifecycle! 🚀</p>
+              <p><strong>Final Step:</strong> Manually delete S3 bucket after receiving this email</p>
               <p><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Full Details</a></p>
             </div>
         continue-on-error: true
