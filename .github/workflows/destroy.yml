@@ -38,7 +38,7 @@ jobs:
           echo "🔥 Destroying main infrastructure..."
           cd infrastructure/main
           
-          # Create backend config
+          # Create backend config (SAME as deploy.yml)
           cat > backend.hcl << EOF
           bucket         = "${{ secrets.STATE_BUCKET_NAME }}"
           key            = "terraform.tfstate"
@@ -47,8 +47,14 @@ jobs:
           encrypt        = true
           EOF
           
-          # Initialize with backend
+          # Initialize with backend (this will download the state from S3)
           terraform init -backend-config=backend.hcl
+          
+          # Show what will be destroyed (should show resources now)
+          terraform plan -destroy \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
           
           # Destroy infrastructure
           terraform destroy -auto-approve \
@@ -80,13 +86,46 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Download Backend State from S3 (if exists)
+        run: |
+          echo "🔍 Checking for existing backend state..."
+          cd infrastructure/backend
+          
+          # Try to download backend state from a known location
+          # We'll store backend state in S3 with a different key
+          aws s3 cp s3://${{ secrets.STATE_BUCKET_NAME }}/backend-terraform.tfstate terraform.tfstate || echo "No backend state found in S3"
+          
+          if [ -f "terraform.tfstate" ]; then
+            echo "✅ Downloaded backend state from S3"
+          else
+            echo "⚠️  No backend state found, will try to import resources"
+          fi
+
       - name: Destroy Backend Infrastructure with Terraform
         run: |
           echo "🔥 Destroying backend infrastructure with Terraform..."
           cd infrastructure/backend
           
-          # Initialize Terraform (uses local state for backend resources)
+          # Initialize Terraform
           terraform init
+          
+          # If no state file exists, try to import resources
+          if [ ! -f "terraform.tfstate" ] || [ ! -s "terraform.tfstate" ]; then
+            echo "📥 Importing existing backend resources..."
+            
+            # Import S3 bucket
+            if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              terraform import aws_s3_bucket.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 import failed"
+              terraform import aws_s3_bucket_versioning.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 versioning import failed"
+              terraform import aws_s3_bucket_server_side_encryption_configuration.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 encryption import failed"
+              terraform import aws_s3_bucket_public_access_block.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 public access block import failed"
+            fi
+            
+            # Import DynamoDB table
+            if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
+              terraform import aws_dynamodb_table.terraform_locks "${{ secrets.DYNAMODB_TABLE_NAME }}" || echo "DynamoDB import failed"
+            fi
+          fi
           
           # Plan destruction (for visibility)
           echo "📋 Planning backend destruction..."

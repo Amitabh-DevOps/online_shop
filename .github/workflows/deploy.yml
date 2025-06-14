@@ -54,6 +54,10 @@ jobs:
             -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
             -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
             -var="aws_region=${{ env.AWS_REGION }}"
+          
+          # Upload backend state to S3 for destroy workflow
+          echo "📤 Uploading backend state to S3..."
+          aws s3 cp terraform.tfstate s3://${{ secrets.STATE_BUCKET_NAME }}/backend-terraform.tfstate || echo "Failed to upload backend state"
 
   # Job 2: Build and Push Docker Image
   build-image:
