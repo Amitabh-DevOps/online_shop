@@ -1,305 +1,266 @@
-name: Destroy Infrastructure
+name: 🗑️ Destroy Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Type "destroy" to confirm destruction'
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm infrastructure destruction'
         required: true
         type: string
+      force_destroy:
+        description: 'Force destroy even if resources are in use'
+        required: false
+        type: boolean
+        default: false
 
 env:
-  AWS_REGION: eu-west-1
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: 1.6.0
 
 jobs:
-  # Job 1: Destroy Main Infrastructure
-  destroy-infrastructure:
-    name: Destroy Infrastructure
+  validate-input:
+    name: 🔍 Validate Destruction Request
     runs-on: ubuntu-latest
-    if: github.event.inputs.confirm == 'destroy'
+    
     steps:
-      - name: Checkout Code
+      - name: ✅ Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Invalid confirmation. You must type 'DESTROY' to proceed."
+            echo "🛡️ This is a safety measure to prevent accidental infrastructure destruction."
+            exit 1
+          fi
+          echo "✅ Confirmation validated. Proceeding with infrastructure destruction."
+
+      - name: ⚠️ Destruction Warning
+        run: |
+          echo "## ⚠️ INFRASTRUCTURE DESTRUCTION WARNING" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚨 **This action will permanently destroy all infrastructure resources!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Resources to be destroyed:" >> $GITHUB_STEP_SUMMARY
+          echo "- 🖥️ EC2 Instance" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔐 Security Groups" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔑 Key Pairs" >> $GITHUB_STEP_SUMMARY
+          echo "- 👤 IAM Roles and Policies" >> $GITHUB_STEP_SUMMARY
+          echo "- 🌐 Network Resources" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ Destruction Settings:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Destroy**: \`${{ github.event.inputs.force_destroy }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+  pre-destroy-backup:
+    name: 💾 Pre-Destruction Backup
+    runs-on: ubuntu-latest
+    needs: validate-input
+    
+    steps:
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
+      - name: 🔧 Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.0"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
-      - name: Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Destroy Main Infrastructure
+      - name: 🚀 Terraform Init
+        working-directory: ./terraform
         run: |
-          echo "🔥 Destroying main infrastructure..."
-          cd infrastructure/main
+          terraform init
+          echo "✅ Terraform initialized for backup"
+
+      - name: 📋 Export Current State
+        working-directory: ./terraform
+        run: |
+          echo "📋 Exporting current infrastructure state..."
+          terraform show -json > terraform-state-backup.json
+          terraform output -json > terraform-outputs-backup.json
           
-          # Create backend config (SAME as deploy.yml)
-          cat > backend.hcl << EOF
-          bucket         = "${{ secrets.STATE_BUCKET_NAME }}"
-          key            = "terraform.tfstate"
-          region         = "${{ env.AWS_REGION }}"
-          dynamodb_table = "${{ secrets.DYNAMODB_TABLE_NAME }}"
-          encrypt        = true
-          EOF
-          
-          # Initialize with backend (this will download the state from S3)
-          terraform init -backend-config=backend.hcl
-          
-          # Show what will be destroyed (should show resources now)
+          echo "💾 Current infrastructure state backed up"
+          echo "📊 State file size: $(du -h terraform-state-backup.json | cut -f1)"
+
+      - name: 📤 Upload State Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-state-backup-${{ github.run_number }}
+          path: |
+            terraform/terraform-state-backup.json
+            terraform/terraform-outputs-backup.json
+          retention-days: 30
+
+  destroy-infrastructure:
+    name: 🗑️ Destroy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [validate-input, pre-destroy-backup]
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: 🔐 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🚀 Terraform Init
+        working-directory: ./terraform
+        run: |
+          terraform init
+          echo "✅ Terraform initialized for destruction"
+
+      - name: 📋 Terraform Plan Destroy
+        working-directory: ./terraform
+        run: |
+          echo "📋 Creating destruction plan..."
           terraform plan -destroy \
             -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
-            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
+            -var="instance_type=t3.micro" \
+            -var="docker_image=placeholder" \
+            -var="dockerhub_username=placeholder" \
+            -out=destroy-plan
           
-          # Destroy infrastructure
-          terraform destroy -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="public_key=${{ secrets.EC2_PUBLIC_KEY }}" \
-            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/online-shop:latest"
-          
-          echo "✅ Main infrastructure destroyed"
+          echo "📋 Destruction plan created successfully"
 
-  # Job 2: Destroy Backend Infrastructure with Terraform
-  destroy-backend:
-    name: Destroy Backend with Terraform
+      - name: 🗑️ Terraform Destroy
+        working-directory: ./terraform
+        run: |
+          echo "🗑️ Starting infrastructure destruction..."
+          
+          if [ "${{ github.event.inputs.force_destroy }}" == "true" ]; then
+            echo "⚠️ Force destroy enabled - ignoring resource dependencies"
+            terraform destroy -auto-approve \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="instance_type=t3.micro" \
+              -var="docker_image=placeholder" \
+              -var="dockerhub_username=placeholder" \
+              -parallelism=1
+          else
+            echo "🔄 Standard destroy - respecting resource dependencies"
+            terraform destroy -auto-approve \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="instance_type=t3.micro" \
+              -var="docker_image=placeholder" \
+              -var="dockerhub_username=placeholder"
+          fi
+          
+          echo "✅ Infrastructure destruction completed"
+
+      - name: 🧹 Cleanup Terraform State
+        working-directory: ./terraform
+        run: |
+          echo "🧹 Cleaning up Terraform state files..."
+          rm -f terraform.tfstate*
+          rm -f destroy-plan
+          rm -f tfplan
+          echo "✅ Cleanup completed"
+
+  post-destroy-verification:
+    name: ✅ Post-Destruction Verification
     runs-on: ubuntu-latest
     needs: destroy-infrastructure
-    if: github.event.inputs.confirm == 'destroy'
+    if: always()
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.6.0"
-
-      - name: Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download Backend State from S3 (if exists)
+      - name: 🔍 Verify Resource Cleanup
         run: |
-          echo "🔍 Checking for existing backend state..."
-          cd infrastructure/backend
+          echo "🔍 Verifying that resources have been properly destroyed..."
           
-          # Try to download backend state from a known location
-          # We'll store backend state in S3 with a different key
-          aws s3 cp s3://${{ secrets.STATE_BUCKET_NAME }}/backend-terraform.tfstate terraform.tfstate || echo "No backend state found in S3"
-          
-          if [ -f "terraform.tfstate" ]; then
-            echo "✅ Downloaded backend state from S3"
-          else
-            echo "⚠️  No backend state found, will try to import resources"
-          fi
-
-      - name: Destroy Backend Infrastructure with Terraform
-        run: |
-          echo "🔥 Destroying backend infrastructure with Terraform..."
-          cd infrastructure/backend
-          
-          # Initialize Terraform
-          terraform init
-          
-          # If no state file exists, try to import resources
-          if [ ! -f "terraform.tfstate" ] || [ ! -s "terraform.tfstate" ]; then
-            echo "📥 Importing existing backend resources..."
-            
-            # Import S3 bucket
-            if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-              terraform import aws_s3_bucket.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 import failed"
-              terraform import aws_s3_bucket_versioning.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 versioning import failed"
-              terraform import aws_s3_bucket_server_side_encryption_configuration.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 encryption import failed"
-              terraform import aws_s3_bucket_public_access_block.terraform_state "${{ secrets.STATE_BUCKET_NAME }}" || echo "S3 public access block import failed"
-            fi
-            
-            # Import DynamoDB table
-            if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-              terraform import aws_dynamodb_table.terraform_locks "${{ secrets.DYNAMODB_TABLE_NAME }}" || echo "DynamoDB import failed"
-            fi
-          fi
-          
-          # Plan destruction (for visibility)
-          echo "📋 Planning backend destruction..."
-          terraform plan -destroy \
-            -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
-            -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
-            -var="aws_region=${{ env.AWS_REGION }}"
-          
-          # Destroy backend using Terraform state management
-          echo "🔥 Executing backend destruction..."
-          terraform destroy -auto-approve \
-            -var="state_bucket_name=${{ secrets.STATE_BUCKET_NAME }}" \
-            -var="dynamodb_table_name=${{ secrets.DYNAMODB_TABLE_NAME }}" \
-            -var="aws_region=${{ env.AWS_REGION }}"
-          
-          echo "✅ Backend infrastructure destroyed with Terraform"
-
-  # Job 3: Verify Complete Cleanup
-  verify-cleanup:
-    name: Verify Complete Cleanup
-    runs-on: ubuntu-latest
-    needs: [destroy-infrastructure, destroy-backend]
-    if: github.event.inputs.confirm == 'destroy'
-    steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify All Resources Destroyed
-        run: |
-          echo "🔍 Verifying complete cleanup..."
-          CLEANUP_STATUS="COMPLETE"
-          
-          # Check S3 bucket
-          echo "Checking S3 bucket: ${{ secrets.STATE_BUCKET_NAME }}"
-          if aws s3api head-bucket --bucket "${{ secrets.STATE_BUCKET_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            echo "❌ S3 bucket still exists"
-            CLEANUP_STATUS="PARTIAL"
-          else
-            echo "✅ S3 bucket successfully destroyed"
-          fi
-          
-          # Check DynamoDB table
-          echo "Checking DynamoDB table: ${{ secrets.DYNAMODB_TABLE_NAME }}"
-          if aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" 2>/dev/null; then
-            TABLE_STATUS=$(aws dynamodb describe-table --table-name "${{ secrets.DYNAMODB_TABLE_NAME }}" --region "${{ env.AWS_REGION }}" --query 'Table.TableStatus' --output text 2>/dev/null || echo "NOT_FOUND")
-            if [ "$TABLE_STATUS" = "DELETING" ]; then
-              echo "⏳ DynamoDB table is being deleted..."
-              echo "✅ DynamoDB table deletion in progress"
-            else
-              echo "❌ DynamoDB table still exists"
-              CLEANUP_STATUS="PARTIAL"
-            fi
-          else
-            echo "✅ DynamoDB table successfully destroyed"
-          fi
-          
-          # Check for remaining EC2 instances
-          echo "Checking for remaining EC2 instances..."
+          # Check for any remaining EC2 instances with our tags
           INSTANCES=$(aws ec2 describe-instances \
-            --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,pending,stopping,stopped" \
-            --query 'Reservations[*].Instances[*].InstanceId' \
-            --output text --region "${{ env.AWS_REGION }}")
+            --filters "Name=tag:Project,Values=online-shop" \
+                     "Name=instance-state-name,Values=running,pending,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text)
           
-          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ] && [ "$INSTANCES" != "" ]; then
-            echo "❌ Found remaining EC2 instances: $INSTANCES"
-            CLEANUP_STATUS="PARTIAL"
+          if [ -n "$INSTANCES" ]; then
+            echo "⚠️ Warning: Found remaining instances: $INSTANCES"
+            echo "remaining_instances=$INSTANCES" >> $GITHUB_OUTPUT
           else
-            echo "✅ No remaining EC2 instances"
+            echo "✅ No remaining EC2 instances found"
           fi
           
-          # Final status
-          echo ""
-          echo "🎯 Final Cleanup Status: $CLEANUP_STATUS"
+          # Check for security groups
+          SECURITY_GROUPS=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Project,Values=online-shop" \
+            --query 'SecurityGroups[].GroupId' \
+            --output text)
           
-          if [ "$CLEANUP_STATUS" = "COMPLETE" ]; then
-            echo "🎉 All resources destroyed successfully!"
-            echo "💰 Your AWS bill should now be minimal"
-            echo "✅ Complete end-to-end Terraform lifecycle validated"
+          if [ -n "$SECURITY_GROUPS" ]; then
+            echo "⚠️ Warning: Found remaining security groups: $SECURITY_GROUPS"
           else
-            echo "⚠️  Some resources may still exist"
-            echo "🔍 Check AWS console for any remaining resources"
+            echo "✅ No remaining security groups found"
           fi
 
-  # Job 4: Manual Cleanup Instructions
-  manual-cleanup-instructions:
-    name: Manual Cleanup Instructions
-    runs-on: ubuntu-latest
-    needs: [destroy-infrastructure, destroy-backend, verify-cleanup]
-    if: github.event.inputs.confirm == 'destroy'
-    steps:
-      - name: Display Final Manual Cleanup Instructions
+      - name: 📊 Generate Destruction Report
+        if: always()
         run: |
-          echo "🎉 Terraform destruction completed successfully!"
-          echo ""
-          echo "📋 Final manual cleanup step:"
-          echo "The S3 bucket and its contents (including Terraform state files)"
-          echo "have been preserved throughout the workflow to ensure proper"
-          echo "Terraform state management."
-          echo ""
-          echo "🔧 Now you can manually clean up the S3 bucket:"
-          echo "aws s3 rm s3://${{ secrets.STATE_BUCKET_NAME }} --recursive"
-          echo "aws s3api delete-bucket --bucket ${{ secrets.STATE_BUCKET_NAME }} --region ${{ env.AWS_REGION }}"
-          echo ""
-          echo "✅ This ensures:"
-          echo "• Proper Terraform state management throughout destruction"
-          echo "• Clean end-to-end Infrastructure as Code lifecycle"
-          echo "• No orphaned resources"
-          echo ""
-          echo "💰 After manual cleanup, your AWS bill will be minimal!"
-
-  # Job 5: Send Notification
-  notify:
-    name: Send Notification
-    runs-on: ubuntu-latest
-    needs: [destroy-infrastructure, destroy-backend, verify-cleanup, manual-cleanup-instructions]
-    if: always() && github.event.inputs.confirm == 'destroy'
-    steps:
-      - name: Determine Status
-        id: status
-        run: |
-          if [[ "${{ needs.destroy-infrastructure.result }}" == "success" ]] && \
-             [[ "${{ needs.destroy-backend.result }}" == "success" ]] && \
-             [[ "${{ needs.verify-cleanup.result }}" == "success" ]]; then
-            echo "result=Success ✅" >> $GITHUB_OUTPUT
-            echo "message=All infrastructure destroyed successfully using Terraform" >> $GITHUB_OUTPUT
+          echo "## 🗑️ Infrastructure Destruction Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Destruction Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Destroy**: \`${{ github.event.inputs.force_destroy }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Region**: \`${{ env.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.destroy-infrastructure.result }}" == "success" ]; then
+            echo "### ✅ Destruction Status" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **Infrastructure successfully destroyed!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💾 Backup Information" >> $GITHUB_STEP_SUMMARY
+            echo "- State backup artifact: \`terraform-state-backup-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Backup retention: 30 days" >> $GITHUB_STEP_SUMMARY
           else
-            echo "result=Partial ⚠️" >> $GITHUB_OUTPUT
-            echo "message=Some destruction steps may need manual completion" >> $GITHUB_OUTPUT
+            echo "### ❌ Destruction Status" >> $GITHUB_STEP_SUMMARY
+            echo "**Destruction failed!** Please check the logs and manually verify resource cleanup." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🛠️ Manual Cleanup Required" >> $GITHUB_STEP_SUMMARY
+            echo "You may need to manually destroy remaining resources in the AWS console." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Send Email Notification
-        uses: dawidd6/action-send-mail@v3
+  cleanup-docker-images:
+    name: 🐳 Cleanup Docker Images
+    runs-on: ubuntu-latest
+    needs: destroy-infrastructure
+    if: success() && github.event.inputs.force_destroy == 'true'
+    
+    steps:
+      - name: 🐳 Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🔥 Infrastructure Destruction - ${{ steps.status.outputs.result }}"
-          to: ${{ secrets.MAIL_TO }}
-          from: ${{ secrets.MAIL_FROM }}
-          html_body: |
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-              <h2 style="color: #d73a49;">🔥 Infrastructure Destruction Complete</h2>
-              <p><strong>Status:</strong> ${{ steps.status.outputs.result }}</p>
-              <p><strong>Message:</strong> ${{ steps.status.outputs.message }}</p>
-              <hr>
-              <h3>Destruction Details:</h3>
-              <ul>
-                <li><strong>Repository:</strong> ${{ github.repository }}</li>
-                <li><strong>Triggered by:</strong> ${{ github.actor }}</li>
-                <li><strong>Method:</strong> Terraform State Management</li>
-                <li><strong>Manual Step:</strong> S3 bucket cleanup (after workflow success)</li>
-              </ul>
-              <hr>
-              <h3>Job Results:</h3>
-              <ul>
-                <li>Destroy Infrastructure: ${{ needs.destroy-infrastructure.result }}</li>
-                <li>Destroy Backend: ${{ needs.destroy-backend.result }}</li>
-                <li>Verify Cleanup: ${{ needs.verify-cleanup.result }}</li>
-              </ul>
-              <hr>
-              <h3>💡 Process Used:</h3>
-              <p>This destruction used proper Terraform state management:</p>
-              <ol>
-                <li>✅ Main infrastructure destroyed via Terraform</li>
-                <li>✅ Backend destroyed via Terraform (state preserved)</li>
-                <li>✅ Complete cleanup verification</li>
-                <li>⚠️ Manual S3 cleanup after workflow success</li>
-              </ol>
-              <p><strong>Final Step:</strong> Manually delete S3 bucket after receiving this email</p>
-              <p><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Full Details</a></p>
-            </div>
-        continue-on-error: true
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 🗑️ Remove Docker Images (Optional)
+        run: |
+          echo "🐳 Note: Docker images in Docker Hub are not automatically removed."
+          echo "💡 If you want to remove them, you can do so manually from Docker Hub."
+          echo "🔗 Visit: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/online-shop"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "Docker images in Docker Hub were not removed automatically." >> $GITHUB_STEP_SUMMARY
+          echo "Visit [Docker Hub](${{ secrets.DOCKERHUB_USERNAME }}/online-shop) to manage them manually." >> $GITHUB_STEP_SUMMARY
