@@ -2,9 +2,9 @@ name: Deploy Online Shop
 
 on:
   push:
-    branches: [ master ]
+    branches: [ phase1 ]
   pull_request:
-    branches: [ master ]
+    branches: [ phase1 ]
 
 env:
   AWS_REGION: eu-west-1
