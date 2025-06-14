@@ -67,12 +67,12 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
                 "collect_list": [
                     {
                         "file_path": "/var/log/user-data.log",
-                        "log_group_name": "/aws/ec2/${PROJECT_NAME}",
+                        "log_group_name": "/aws/ec2/${project_name}",
                         "log_stream_name": "{instance_id}/user-data.log"
                     },
                     {
                         "file_path": "/var/log/docker.log",
-                        "log_group_name": "/aws/ec2/${PROJECT_NAME}",
+                        "log_group_name": "/aws/ec2/${project_name}",
                         "log_stream_name": "{instance_id}/docker.log"
                     }
                 ]
@@ -250,13 +250,13 @@ fi
 # Check disk space
 DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
 if [ $DISK_USAGE -gt 80 ]; then
-    log "⚠️ Disk usage is high: ${DISK_USAGE}%"
+    log "⚠️ Disk usage is high: $DISK_USAGE%"
 fi
 
 # Check memory usage
 MEM_USAGE=$(free | awk 'NR==2{printf "%.2f", $3*100/$2}')
 if (( $(echo "$MEM_USAGE > 80" | bc -l) )); then
-    log "⚠️ Memory usage is high: ${MEM_USAGE}%"
+    log "⚠️ Memory usage is high: $MEM_USAGE%"
 fi
 
 log "✅ System monitoring check completed"
@@ -335,6 +335,6 @@ touch /opt/online-shop/.user-data-complete
 chown ec2-user:ec2-user /opt/online-shop/.user-data-complete
 
 # Send completion signal to CloudFormation (if needed)
-# /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+# /opt/aws/bin/cfn-signal -e $? --stack STACK_NAME --resource AutoScalingGroup --region REGION
 
 log "🎉 Online Shop infrastructure setup completed!"

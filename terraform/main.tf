@@ -2,20 +2,9 @@
 # Online Shop Infrastructure - Main Configuration
 # ============================================================================
 
-terraform {
-  required_version = ">= 1.6.0"
-  
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-  }
+# Note: Terraform version and provider requirements are defined in versions.tf
 
+terraform {
   # Uncomment and configure for remote state management
   # backend "s3" {
   #   bucket = "your-terraform-state-bucket"
@@ -257,7 +246,7 @@ resource "aws_instance" "online_shop" {
   key_name               = aws_key_pair.ec2_key_pair.key_name
   vpc_security_group_ids = [aws_security_group.online_shop_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-  
+
   subnet_id                   = data.aws_subnets.default.ids[0]
   associate_public_ip_address = true
 
