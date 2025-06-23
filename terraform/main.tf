@@ -197,23 +197,23 @@ resource "aws_instance" "online_shop" {
   key_name               = aws_key_pair.online_shop_key.key_name
   vpc_security_group_ids = [aws_security_group.online_shop_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-  
+
   subnet_id                   = data.aws_subnets.default.ids[0]
   associate_public_ip_address = true
 
   user_data = base64encode(templatefile("${path.module}/user-data.sh", {
-    docker_image    = var.docker_image
-    app_port        = var.app_port
-    log_group_name  = aws_cloudwatch_log_group.online_shop_logs.name
-    aws_region      = var.aws_region
-    app_version     = var.app_version
+    docker_image   = var.docker_image
+    app_port       = var.app_port
+    log_group_name = aws_cloudwatch_log_group.online_shop_logs.name
+    aws_region     = var.aws_region
+    app_version    = var.app_version
   }))
 
   root_block_device {
     volume_type = "gp3"
     volume_size = 20
     encrypted   = true
-    
+
     tags = {
       Name = "${var.project_name}-root-volume"
     }

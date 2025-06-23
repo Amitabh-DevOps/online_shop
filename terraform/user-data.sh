@@ -302,7 +302,7 @@ systemctl status docker | tee -a /var/log/docker.log
 log "User data script execution completed successfully"
 log "Application should be accessible at http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):$APP_PORT"
 
-# Send completion signal
-/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region} 2>/dev/null || true
+# Send completion signal (CloudFormation not used, but keeping for compatibility)
+# /opt/aws/bin/cfn-signal -e $? --stack StackName --resource AutoScalingGroup --region $AWS_REGION 2>/dev/null || true
 
 exit 0
