@@ -135,6 +135,17 @@ jobs:
         run: |
           echo "instance_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
           echo "instance_id=$(terraform output -raw instance_id)" >> $GITHUB_OUTPUT
+          
+          # Save private key for SSH access
+          terraform output -raw private_key_pem > ../ssh-key.pem
+          chmod 600 ../ssh-key.pem
+
+      - name: Upload SSH Key
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-private-key-${{ github.run_number }}
+          path: ssh-key.pem
+          retention-days: 7
 
   # Job 3: Health Check and Verification
   health-check:
