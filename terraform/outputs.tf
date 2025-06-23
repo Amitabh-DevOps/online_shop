@@ -96,6 +96,5 @@ output "deployment_info" {
     app_version     = var.app_version
     environment     = var.environment
     region          = var.aws_region
-    deployed_at     = timestamp()
   }
 }

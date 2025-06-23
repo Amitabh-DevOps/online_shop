@@ -19,7 +19,6 @@ provider "aws" {
       Environment = var.environment
       ManagedBy   = "Terraform"
       Owner       = var.owner
-      CreatedAt   = timestamp()
     }
   }
 }
@@ -59,7 +58,12 @@ resource "aws_key_pair" "online_shop_key" {
   public_key = tls_private_key.online_shop_key.public_key_openssh
 
   tags = {
-    Name = "${var.project_name}-key-pair"
+    Name      = "${var.project_name}-key-pair"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
 
@@ -108,11 +112,13 @@ resource "aws_security_group" "online_shop_sg" {
   }
 
   tags = {
-    Name = "${var.project_name}-security-group"
+    Name      = "${var.project_name}-security-group"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
   }
 
   lifecycle {
     create_before_destroy = true
+    ignore_changes        = [tags["CreatedAt"]]
   }
 }
 
@@ -134,7 +140,12 @@ resource "aws_iam_role" "ec2_role" {
   })
 
   tags = {
-    Name = "${var.project_name}-ec2-role"
+    Name      = "${var.project_name}-ec2-role"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
 
@@ -176,7 +187,12 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 
   tags = {
-    Name = "${var.project_name}-ec2-profile"
+    Name      = "${var.project_name}-ec2-profile"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
 
@@ -186,7 +202,12 @@ resource "aws_cloudwatch_log_group" "online_shop_logs" {
   retention_in_days = var.log_retention_days
 
   tags = {
-    Name = "${var.project_name}-log-group"
+    Name      = "${var.project_name}-log-group"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
 
@@ -215,17 +236,20 @@ resource "aws_instance" "online_shop" {
     encrypted   = true
 
     tags = {
-      Name = "${var.project_name}-root-volume"
+      Name      = "${var.project_name}-root-volume"
+      CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
     }
   }
 
   tags = {
-    Name = "${var.project_name}-instance"
-    Type = "Application Server"
+    Name      = "${var.project_name}-instance"
+    Type      = "Application Server"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
   }
 
   lifecycle {
     create_before_destroy = true
+    ignore_changes        = [tags["CreatedAt"], root_block_device[0].tags["CreatedAt"]]
   }
 }
 
@@ -247,7 +271,12 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
   }
 
   tags = {
-    Name = "${var.project_name}-cpu-alarm"
+    Name      = "${var.project_name}-cpu-alarm"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
 
@@ -269,6 +298,11 @@ resource "aws_cloudwatch_metric_alarm" "instance_health" {
   }
 
   tags = {
-    Name = "${var.project_name}-health-alarm"
+    Name      = "${var.project_name}-health-alarm"
+    CreatedAt = formatdate("YYYY-MM-DD hh:mm:ss ZZZ", timestamp())
+  }
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
   }
 }
