@@ -79,130 +79,24 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
-      - name: Import Existing Resources (if any)
-        working-directory: ./terraform
-        run: |
-          echo "Attempting to discover and import existing resources..."
-          
-          # Try to find existing resources by tags
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,stopped" \
-            --query "Reservations[0].Instances[0].InstanceId" \
-            --output text 2>/dev/null || echo "None")
-          
-          if [ "$INSTANCE_ID" != "None" ] && [ "$INSTANCE_ID" != "null" ]; then
-            echo "Found existing EC2 instance: $INSTANCE_ID"
-            echo "Attempting to import resources into Terraform state..."
-            
-            # Import the instance (this might fail, but that's okay)
-            terraform import aws_instance.online_shop $INSTANCE_ID || echo "Could not import instance"
-            
-            # Try to import other resources
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters "Name=tag:Project,Values=online-shop" \
-              --query "SecurityGroups[0].GroupId" \
-              --output text 2>/dev/null || echo "None")
-            
-            if [ "$SG_ID" != "None" ] && [ "$SG_ID" != "null" ]; then
-              terraform import aws_security_group.online_shop_sg $SG_ID || echo "Could not import security group"
-            fi
-          else
-            echo "No existing resources found to import"
-          fi
-
       - name: Generate Current State Backup
         working-directory: ./terraform
         run: |
           echo "Creating backup of current infrastructure state"
-          
-          # Check if state file exists
-          if terraform show > /dev/null 2>&1; then
-            terraform show > terraform-state-backup-$(date +%Y%m%d-%H%M%S).txt
-            terraform state list > terraform-resources-backup-$(date +%Y%m%d-%H%M%S).txt
-            echo "State backup created successfully"
-          else
-            echo "No Terraform state found - creating resource discovery report"
-            
-            # Create a report of AWS resources that match our project
-            cat > resource-discovery-$(date +%Y%m%d-%H%M%S).txt << EOF
-# AWS Resource Discovery Report
-# Generated: $(date)
-# Project: online-shop
-
-## EC2 Instances
-$(aws ec2 describe-instances --filters "Name=tag:Project,Values=online-shop" --output table || echo "No EC2 instances found")
-
-## Security Groups  
-$(aws ec2 describe-security-groups --filters "Name=tag:Project,Values=online-shop" --output table || echo "No security groups found")
-
-## IAM Roles
-$(aws iam list-roles --query "Roles[?contains(RoleName, 'online-shop')]" --output table || echo "No IAM roles found")
-
-## CloudWatch Log Groups
-$(aws logs describe-log-groups --log-group-name-prefix "/aws/ec2/online-shop" --output table || echo "No log groups found")
-
-## Key Pairs
-$(aws ec2 describe-key-pairs --filters "Name=tag:Project,Values=online-shop" --output table || echo "No key pairs found")
-EOF
-          fi
+          terraform show > terraform-state-backup-$(date +%Y%m%d-%H%M%S).txt
+          terraform state list > terraform-resources-backup-$(date +%Y%m%d-%H%M%S).txt
 
       - name: Document Current Resources
         working-directory: ./terraform
         run: |
           echo "Documenting resources to be destroyed:"
-          
-          # Try to create a destroy plan
-          if terraform plan -destroy -no-color > destroy-plan-$(date +%Y%m%d-%H%M%S).txt 2>&1; then
-            echo "Destroy plan created successfully"
-          else
-            echo "Could not create destroy plan - will attempt direct resource cleanup"
-            
-            # Create manual cleanup script
-            cat > manual-cleanup-$(date +%Y%m%d-%H%M%S).sh << 'EOF'
-#!/bin/bash
-# Manual cleanup script for online-shop resources
-echo "Manual cleanup of online-shop resources..."
-
-# Terminate EC2 instances
-aws ec2 describe-instances --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,stopped" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
-
-# Delete security groups (after instances are terminated)
-sleep 60
-aws ec2 describe-security-groups --filters "Name=tag:Project,Values=online-shop" --query "SecurityGroups[].GroupId" --output text | xargs -r -I {} aws ec2 delete-security-group --group-id {}
-
-# Delete IAM roles and policies
-aws iam list-roles --query "Roles[?contains(RoleName, 'online-shop')].RoleName" --output text | xargs -r -I {} bash -c 'aws iam list-attached-role-policies --role-name {} --query "AttachedPolicies[].PolicyArn" --output text | xargs -r -I [] aws iam detach-role-policy --role-name {} --policy-arn []; aws iam list-role-policies --role-name {} --query "PolicyNames[]" --output text | xargs -r -I [] aws iam delete-role-policy --role-name {} --policy-name []; aws iam delete-role --role-name {}'
-
-# Delete CloudWatch log groups
-aws logs describe-log-groups --log-group-name-prefix "/aws/ec2/online-shop" --query "logGroups[].logGroupName" --output text | xargs -r -I {} aws logs delete-log-group --log-group-name {}
-
-# Delete key pairs
-aws ec2 describe-key-pairs --filters "Name=tag:Project,Values=online-shop" --query "KeyPairs[].KeyName" --output text | xargs -r -I {} aws ec2 delete-key-pair --key-name {}
-
-echo "Manual cleanup completed"
-EOF
-            chmod +x manual-cleanup-$(date +%Y%m%d-%H%M%S).sh
-          fi
+          terraform plan -destroy -no-color > destroy-plan-$(date +%Y%m%d-%H%M%S).txt || true
 
       - name: Upload Backup Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: pre-destroy-backup-${{ github.run_number }}
           path: terraform/*backup*.txt
-          retention-days: 30
-
-      - name: Upload Discovery Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: resource-discovery-${{ github.run_number }}
-          path: terraform/resource-discovery*.txt
-          retention-days: 30
-
-      - name: Upload Cleanup Scripts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cleanup-scripts-${{ github.run_number }}
-          path: terraform/manual-cleanup*.sh
           retention-days: 30
 
   # Job 3: Destroy Infrastructure
@@ -233,178 +127,28 @@ EOF
         working-directory: ./terraform
         run: terraform init
 
-      - name: Import and Destroy Resources
+      - name: Plan Destroy
         working-directory: ./terraform
         run: |
-          echo "Attempting to discover and destroy online-shop resources..."
-          
-          # Try Terraform destroy first
-          if terraform destroy -auto-approve; then
-            echo "Terraform destroy completed successfully"
-          else
-            echo "Terraform destroy failed or no state found. Attempting manual cleanup..."
-            
-            # Manual cleanup of resources by tags
-            echo "Starting manual resource cleanup..."
-            
-            # 1. Terminate EC2 instances
-            echo "Terminating EC2 instances..."
-            INSTANCE_IDS=$(aws ec2 describe-instances \
-              --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,stopped,stopping" \
-              --query "Reservations[].Instances[].InstanceId" \
-              --output text)
-            
-            if [ -n "$INSTANCE_IDS" ] && [ "$INSTANCE_IDS" != "None" ]; then
-              echo "Found instances to terminate: $INSTANCE_IDS"
-              aws ec2 terminate-instances --instance-ids $INSTANCE_IDS
-              echo "Waiting for instances to terminate..."
-              aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS || echo "Wait timeout, continuing..."
-            else
-              echo "No EC2 instances found"
-            fi
-            
-            # 2. Delete Security Groups
-            echo "Deleting security groups..."
-            SG_IDS=$(aws ec2 describe-security-groups \
-              --filters "Name=tag:Project,Values=online-shop" \
-              --query "SecurityGroups[?GroupName!='default'].GroupId" \
-              --output text)
-            
-            if [ -n "$SG_IDS" ] && [ "$SG_IDS" != "None" ]; then
-              echo "Found security groups to delete: $SG_IDS"
-              for sg_id in $SG_IDS; do
-                aws ec2 delete-security-group --group-id $sg_id || echo "Could not delete security group $sg_id"
-              done
-            else
-              echo "No security groups found"
-            fi
-            
-            # 3. Delete IAM roles and policies
-            echo "Deleting IAM roles..."
-            ROLE_NAMES=$(aws iam list-roles \
-              --query "Roles[?contains(RoleName, 'online-shop')].RoleName" \
-              --output text)
-            
-            if [ -n "$ROLE_NAMES" ] && [ "$ROLE_NAMES" != "None" ]; then
-              echo "Found IAM roles to delete: $ROLE_NAMES"
-              for role_name in $ROLE_NAMES; do
-                # Detach managed policies
-                aws iam list-attached-role-policies --role-name $role_name \
-                  --query "AttachedPolicies[].PolicyArn" --output text | \
-                  xargs -r -I {} aws iam detach-role-policy --role-name $role_name --policy-arn {}
-                
-                # Delete inline policies
-                aws iam list-role-policies --role-name $role_name \
-                  --query "PolicyNames[]" --output text | \
-                  xargs -r -I {} aws iam delete-role-policy --role-name $role_name --policy-name {}
-                
-                # Remove role from instance profiles
-                aws iam list-instance-profiles-for-role --role-name $role_name \
-                  --query "InstanceProfiles[].InstanceProfileName" --output text | \
-                  xargs -r -I {} aws iam remove-role-from-instance-profile --instance-profile-name {} --role-name $role_name
-                
-                # Delete the role
-                aws iam delete-role --role-name $role_name || echo "Could not delete role $role_name"
-              done
-            else
-              echo "No IAM roles found"
-            fi
-            
-            # 4. Delete Instance Profiles
-            echo "Deleting instance profiles..."
-            PROFILE_NAMES=$(aws iam list-instance-profiles \
-              --query "InstanceProfiles[?contains(InstanceProfileName, 'online-shop')].InstanceProfileName" \
-              --output text)
-            
-            if [ -n "$PROFILE_NAMES" ] && [ "$PROFILE_NAMES" != "None" ]; then
-              echo "Found instance profiles to delete: $PROFILE_NAMES"
-              for profile_name in $PROFILE_NAMES; do
-                aws iam delete-instance-profile --instance-profile-name $profile_name || echo "Could not delete instance profile $profile_name"
-              done
-            else
-              echo "No instance profiles found"
-            fi
-            
-            # 5. Delete CloudWatch Log Groups
-            echo "Deleting CloudWatch log groups..."
-            LOG_GROUPS=$(aws logs describe-log-groups \
-              --log-group-name-prefix "/aws/ec2/online-shop" \
-              --query "logGroups[].logGroupName" \
-              --output text)
-            
-            if [ -n "$LOG_GROUPS" ] && [ "$LOG_GROUPS" != "None" ]; then
-              echo "Found log groups to delete: $LOG_GROUPS"
-              for log_group in $LOG_GROUPS; do
-                aws logs delete-log-group --log-group-name $log_group || echo "Could not delete log group $log_group"
-              done
-            else
-              echo "No log groups found"
-            fi
-            
-            # 6. Delete CloudWatch Alarms
-            echo "Deleting CloudWatch alarms..."
-            ALARM_NAMES=$(aws cloudwatch describe-alarms \
-              --query "MetricAlarms[?contains(AlarmName, 'online-shop')].AlarmName" \
-              --output text)
-            
-            if [ -n "$ALARM_NAMES" ] && [ "$ALARM_NAMES" != "None" ]; then
-              echo "Found alarms to delete: $ALARM_NAMES"
-              aws cloudwatch delete-alarms --alarm-names $ALARM_NAMES || echo "Could not delete alarms"
-            else
-              echo "No CloudWatch alarms found"
-            fi
-            
-            # 7. Delete Key Pairs
-            echo "Deleting key pairs..."
-            KEY_NAMES=$(aws ec2 describe-key-pairs \
-              --filters "Name=tag:Project,Values=online-shop" \
-              --query "KeyPairs[].KeyName" \
-              --output text)
-            
-            if [ -n "$KEY_NAMES" ] && [ "$KEY_NAMES" != "None" ]; then
-              echo "Found key pairs to delete: $KEY_NAMES"
-              for key_name in $KEY_NAMES; do
-                aws ec2 delete-key-pair --key-name $key_name || echo "Could not delete key pair $key_name"
-              done
-            else
-              echo "No key pairs found"
-            fi
-            
-            echo "Manual cleanup completed"
-          fi
+          echo "Planning infrastructure destruction..."
+          terraform plan -destroy -out=destroy.tfplan
+
+      - name: Apply Destroy Plan
+        working-directory: ./terraform
+        run: |
+          echo "Executing infrastructure destruction..."
+          terraform apply -auto-approve destroy.tfplan
 
       - name: Verify Destruction
         working-directory: ./terraform
         run: |
           echo "Verifying all resources have been destroyed..."
-          
-          # Check for remaining resources
-          REMAINING_INSTANCES=$(aws ec2 describe-instances \
-            --filters "Name=tag:Project,Values=online-shop" "Name=instance-state-name,Values=running,stopped,stopping" \
-            --query "Reservations[].Instances[].InstanceId" \
-            --output text | wc -w)
-          
-          REMAINING_SG=$(aws ec2 describe-security-groups \
-            --filters "Name=tag:Project,Values=online-shop" \
-            --query "SecurityGroups[?GroupName!='default'].GroupId" \
-            --output text | wc -w)
-          
-          REMAINING_ROLES=$(aws iam list-roles \
-            --query "Roles[?contains(RoleName, 'online-shop')].RoleName" \
-            --output text | wc -w)
-          
-          echo "Remaining resources:"
-          echo "- EC2 Instances: $REMAINING_INSTANCES"
-          echo "- Security Groups: $REMAINING_SG"
-          echo "- IAM Roles: $REMAINING_ROLES"
-          
-          TOTAL_REMAINING=$((REMAINING_INSTANCES + REMAINING_SG + REMAINING_ROLES))
-          
-          if [ $TOTAL_REMAINING -eq 0 ]; then
+          REMAINING_RESOURCES=$(terraform state list | wc -l)
+          if [ $REMAINING_RESOURCES -eq 0 ]; then
             echo "SUCCESS: All resources have been destroyed"
           else
-            echo "WARNING: $TOTAL_REMAINING resources may still exist"
-            echo "Check AWS console for any remaining resources"
+            echo "WARNING: $REMAINING_RESOURCES resources may still exist"
+            terraform state list
           fi
 
   # Job 4: Post-destroy cleanup and verification
