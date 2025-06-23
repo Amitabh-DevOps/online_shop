@@ -1,0 +1,198 @@
+name: Deploy Online Shop
+
+on:
+  push:
+    branches: [ feat/github_actions ]
+  workflow_dispatch:
+
+env:
+  DOCKER_HUB_USERNAME: amitabhdevops
+  DOCKER_IMAGE_NAME: online-shop
+  AWS_REGION: eu-west-1
+  TF_VERSION: 1.5.0
+
+jobs:
+  # Job 1: Build and Push Docker Image
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.version.outputs.new-version }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Semantic Version
+        id: version
+        run: |
+          # Get the latest tag, if no tags exist, start with v1.0.0
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Extract version numbers
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r -a VERSION_PARTS <<< "$VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+          
+          # Increment patch version
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+          
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "version-number=${MAJOR}.${MINOR}.${NEW_PATCH}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.new-version }}
+            type=raw,value=latest
+            type=sha,prefix={{branch}}-
+
+      - name: Build and Push Docker Image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create Git Tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag ${{ steps.version.outputs.new-version }}
+          git push origin ${{ steps.version.outputs.new-version }}
+
+  # Job 2: Deploy Infrastructure and Application
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    outputs:
+      instance-ip: ${{ steps.terraform-output.outputs.instance_ip }}
+      instance-id: ${{ steps.terraform-output.outputs.instance_id }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="docker_image=${{ env.DOCKER_HUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="app_version=${{ needs.build-and-push.outputs.version }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        id: terraform-output
+        working-directory: ./terraform
+        run: |
+          echo "instance_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+          echo "instance_id=$(terraform output -raw instance_id)" >> $GITHUB_OUTPUT
+
+  # Job 3: Health Check and Verification
+  health-check:
+    name: Health Check & Verification
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    
+    steps:
+      - name: Wait for Application Startup
+        run: sleep 90
+
+      - name: Application Health Check
+        run: |
+          INSTANCE_IP="${{ needs.deploy-infrastructure.outputs.instance-ip }}"
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          
+          echo "Checking application health at http://${INSTANCE_IP}:3000"
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS"
+            
+            if curl -f -s --connect-timeout 10 --max-time 30 "http://${INSTANCE_IP}:3000" > /dev/null; then
+              echo "Application is healthy and responding"
+              exit 0
+            else
+              echo "Health check failed, retrying in 30 seconds..."
+              sleep 30
+              ATTEMPT=$((ATTEMPT + 1))
+            fi
+          done
+          
+          echo "Health check failed after $MAX_ATTEMPTS attempts"
+          exit 1
+
+      - name: Display Deployment Information
+        run: |
+          echo "Deployment completed successfully"
+          echo "Application URL: http://${{ needs.deploy-infrastructure.outputs.instance-ip }}:3000"
+          echo "Instance ID: ${{ needs.deploy-infrastructure.outputs.instance-id }}"
+          echo "Docker Image: ${{ needs.build-and-push.outputs.image-tag }}"
+
+  # Job 4: Post-deployment verification
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-infrastructure, health-check]
+    if: always()
+    
+    steps:
+      - name: Deployment Status Check
+        run: |
+          if [ "${{ needs.health-check.result }}" == "success" ]; then
+            echo "DEPLOYMENT SUCCESSFUL"
+            echo "Application is live at: http://${{ needs.deploy-infrastructure.outputs.instance-ip }}:3000"
+            echo "Version deployed: ${{ needs.build-and-push.outputs.version }}"
+          else
+            echo "DEPLOYMENT FAILED"
+            echo "Check workflow logs for detailed error information"
+            exit 1
+          fi

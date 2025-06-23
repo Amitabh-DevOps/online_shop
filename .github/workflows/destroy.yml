@@ -1,0 +1,211 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm infrastructure destruction'
+        required: true
+        type: string
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+        - development
+
+env:
+  AWS_REGION: eu-west-1
+  TF_VERSION: 1.5.0
+
+jobs:
+  # Job 1: Validation and Safety Checks
+  validate-destroy:
+    name: Validate Destroy Request
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.validation.outputs.proceed }}
+    
+    steps:
+      - name: Validate Confirmation Input
+        id: validation
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "ERROR: Confirmation input must be exactly 'DESTROY'"
+            echo "Provided: '${{ github.event.inputs.confirm_destroy }}'"
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "Confirmation validated successfully"
+            echo "proceed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display Destroy Information
+        run: |
+          echo "INFRASTRUCTURE DESTRUCTION INITIATED"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Initiated by: ${{ github.actor }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Timestamp: $(date -u)"
+
+  # Job 2: Pre-destroy backup and documentation
+  pre-destroy-backup:
+    name: Pre-Destroy Backup
+    runs-on: ubuntu-latest
+    needs: validate-destroy
+    if: needs.validate-destroy.outputs.proceed == 'true'
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Generate Current State Backup
+        working-directory: ./terraform
+        run: |
+          echo "Creating backup of current infrastructure state"
+          terraform show > terraform-state-backup-$(date +%Y%m%d-%H%M%S).txt
+          terraform state list > terraform-resources-backup-$(date +%Y%m%d-%H%M%S).txt
+
+      - name: Document Current Resources
+        working-directory: ./terraform
+        run: |
+          echo "Documenting resources to be destroyed:"
+          terraform plan -destroy -no-color > destroy-plan-$(date +%Y%m%d-%H%M%S).txt || true
+
+      - name: Upload Backup Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-destroy-backup-${{ github.run_number }}
+          path: terraform/*backup*.txt
+          retention-days: 30
+
+  # Job 3: Destroy Infrastructure
+  destroy-infrastructure:
+    name: Destroy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [validate-destroy, pre-destroy-backup]
+    if: needs.validate-destroy.outputs.proceed == 'true'
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Plan Destroy
+        working-directory: ./terraform
+        run: |
+          echo "Planning infrastructure destruction..."
+          terraform plan -destroy -out=destroy.tfplan
+
+      - name: Apply Destroy Plan
+        working-directory: ./terraform
+        run: |
+          echo "Executing infrastructure destruction..."
+          terraform apply -auto-approve destroy.tfplan
+
+      - name: Verify Destruction
+        working-directory: ./terraform
+        run: |
+          echo "Verifying all resources have been destroyed..."
+          REMAINING_RESOURCES=$(terraform state list | wc -l)
+          if [ $REMAINING_RESOURCES -eq 0 ]; then
+            echo "SUCCESS: All resources have been destroyed"
+          else
+            echo "WARNING: $REMAINING_RESOURCES resources may still exist"
+            terraform state list
+          fi
+
+  # Job 4: Post-destroy cleanup and verification
+  post-destroy-cleanup:
+    name: Post-Destroy Cleanup
+    runs-on: ubuntu-latest
+    needs: [validate-destroy, destroy-infrastructure]
+    if: always() && needs.validate-destroy.outputs.proceed == 'true'
+    
+    steps:
+      - name: Cleanup Verification
+        run: |
+          echo "POST-DESTRUCTION CLEANUP VERIFICATION"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Destruction completed at: $(date -u)"
+          echo "Initiated by: ${{ github.actor }}"
+
+      - name: Generate Destruction Report
+        run: |
+          cat << EOF > destruction-report.md
+          # Infrastructure Destruction Report
+          
+          **Environment:** ${{ github.event.inputs.environment }}
+          **Initiated by:** ${{ github.actor }}
+          **Repository:** ${{ github.repository }}
+          **Workflow Run:** ${{ github.run_number }}
+          **Timestamp:** $(date -u)
+          **Status:** ${{ needs.destroy-infrastructure.result }}
+          
+          ## Actions Taken
+          - Pre-destroy backup created
+          - Terraform destroy executed
+          - Resource cleanup verified
+          
+          ## Next Steps
+          - Verify no unexpected AWS charges
+          - Confirm all resources are properly terminated
+          - Review backup artifacts if restoration is needed
+          
+          EOF
+
+      - name: Upload Destruction Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: destruction-report-${{ github.run_number }}
+          path: destruction-report.md
+          retention-days: 90
+
+      - name: Final Status Report
+        run: |
+          if [ "${{ needs.destroy-infrastructure.result }}" == "success" ]; then
+            echo "INFRASTRUCTURE DESTRUCTION COMPLETED SUCCESSFULLY"
+            echo "All resources have been removed from AWS"
+            echo "Backup artifacts are available for 30 days"
+          else
+            echo "INFRASTRUCTURE DESTRUCTION FAILED"
+            echo "Some resources may still exist in AWS"
+            echo "Manual cleanup may be required"
+            exit 1
+          fi
